@@ -369,12 +369,10 @@ function FinanceApp({ user }) {
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} />}
-        {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} addAsset={addAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
-        {tab === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
-        {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} />}
-        {tab === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
-        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} />}
+        {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
+        {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
+        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} />}
       </main>
     </div>
   );
@@ -401,11 +399,9 @@ function TopBar({ past, undo, saveStatus, saveNow, onLogout }) {
 function Sidebar({ tab, setTab }) {
   const items = [
     { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
-    { id: "spese", label: "Spese", icon: Receipt },
     { id: "patrimonio", label: "Patrimonio", icon: Wallet },
-    { id: "movimenti", label: "Movimenti", icon: ArrowLeftRight },
+    { id: "spese", label: "Spese", icon: Receipt },
     { id: "strumenti", label: "Strumenti", icon: Wrench },
-    { id: "categorie", label: "Categorie", icon: Tags },
     { id: "profilo", label: "Profilo", icon: User },
   ];
   return (
@@ -577,10 +573,10 @@ function YearSelect({ year, setYear }) {
 
 /* ============ SPESE ============ */
 function Spese({ expenses, categories, addExpenses, deleteExpense }) {
+  const [view, setView] = useState("nuova"); // nuova | storico
   const [filterYear, setFilterYear] = useState("Tutti");
   const [filterCat, setFilterCat] = useState("Tutte");
   const [search, setSearch] = useState("");
-  const [showForm, setShowForm] = useState(false);
   const [page, setPage] = useState(1);
   const PER_PAGE = 40;
 
@@ -595,6 +591,10 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
   const totale = filtered.reduce((s, e) => s + (e.primary === "Entrate" ? 0 : e.amount), 0);
   const pageData = filtered.slice(0, page * PER_PAGE);
 
+  if (view === "nuova") {
+    return <NuovaSpesaForm categories={categories} onClose={() => setView("storico")} onSave={(exp) => addExpenses([exp])} />;
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -602,7 +602,7 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
           <h1 className="nav-page-title">Spese</h1>
           <p className="nav-page-sub">{filtered.length} movimenti — totale spese filtrate: {fmtCHF(totale)}</p>
         </div>
-        <button className="btn primary" onClick={() => setShowForm(true)}><Plus size={15} />Aggiungi spesa</button>
+        <button className="btn primary" onClick={() => setView("nuova")}><Plus size={15} />Aggiungi spesa</button>
       </div>
 
       <div className="tabs-row">
@@ -648,13 +648,12 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
           </div>
         )}
       </div>
-
-      {showForm && <ExpenseFormModal categories={categories} onClose={() => setShowForm(false)} onSave={(exp) => { addExpenses([exp]); setShowForm(false); }} />}
     </div>
   );
 }
 
-function ExpenseFormModal({ categories, onClose, onSave }) {
+/* ============ NUOVA SPESA: vista di ingresso di default della tab Spese ============ */
+function NuovaSpesaForm({ categories, onClose, onSave }) {
   const primaries = Object.keys(categories);
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [desc, setDesc] = useState("");
@@ -662,14 +661,23 @@ function ExpenseFormModal({ categories, onClose, onSave }) {
   const [primary, setPrimary] = useState(primaries[0] || "");
   const [secondary, setSecondary] = useState((categories[primaries[0]] || [])[0] || "");
   const [note, setNote] = useState("");
+  const [justSaved, setJustSaved] = useState(false);
   const secondaries = categories[primary] || [];
 
+  const save = () => {
+    if (!desc || !amount) return;
+    onSave({ date, desc, amount: parseFloat(amount), primary, secondary, note });
+    setDesc(""); setAmount(""); setNote("");
+    setJustSaved(true);
+    setTimeout(() => setJustSaved(false), 2000);
+  };
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal" onClick={(e) => e.stopPropagation()}>
+    <div>
+      <div className="card" style={{ maxWidth: 420 }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Nuova spesa</h3>
-          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+          <h1 className="nav-page-title" style={{ margin: 0 }}>Nuova spesa</h1>
+          <button className="icon-btn" onClick={onClose} title="Vai allo storico spese"><X size={18} /></button>
         </div>
         <div className="field"><label className="field-label">Data</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
         <div className="field"><label className="field-label">Descrizione</label><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="es. spesa migros" /></div>
@@ -689,10 +697,10 @@ function ExpenseFormModal({ categories, onClose, onSave }) {
           </div>
         </div>
         <div className="field"><label className="field-label">Nota (opzionale)</label><input value={note} onChange={(e) => setNote(e.target.value)} /></div>
-        <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 6 }}
-          onClick={() => { if (!desc || !amount) return; onSave({ date, desc, amount: parseFloat(amount), primary, secondary, note }); }}>
-          Salva spesa
+        <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} onClick={save}>
+          <Plus size={14} />Salva spesa
         </button>
+        {justSaved && <div className="pill" style={{ display: "block", textAlign: "center", marginTop: 10, color: "var(--mint)", borderColor: "var(--mint)" }}>✓ Spesa salvata</div>}
       </div>
     </div>
   );
@@ -1328,8 +1336,8 @@ function MovementFormModal({ patrimonio, prices, onClose, onSave }) {
   );
 }
 
-/* ============ STRUMENTI (Ammortamento + Split the bill) ============ */
-function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses }) {
+/* ============ STRUMENTI (Ammortamento + Split the bill + Movimenti) ============ */
+function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses, movements, addMovement, deleteMovement, prices }) {
   const [sub, setSub] = useState("ammortamento");
   return (
     <div>
@@ -1338,9 +1346,11 @@ function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses 
       <div className="tabs-row">
         <button className={"btn" + (sub === "ammortamento" ? " primary" : "")} onClick={() => setSub("ammortamento")}><Percent size={14} />Ammortamento</button>
         <button className={"btn" + (sub === "split" ? " primary" : "")} onClick={() => setSub("split")}><SplitSquareHorizontal size={14} />Split the bill</button>
+        <button className={"btn" + (sub === "movimenti" ? " primary" : "")} onClick={() => setSub("movimenti")}><ArrowLeftRight size={14} />Movimenti</button>
       </div>
       {sub === "ammortamento" && <AmmortamentoTool patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} />}
       {sub === "split" && <SplitBillTool categories={categories} addExpenses={addExpenses} />}
+      {sub === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
     </div>
   );
 }
@@ -1574,8 +1584,9 @@ function Categorie({ categories, setCategories }) {
   );
 }
 
-/* ============ PROFILO: nome utente, cambio email e password ============ */
-function Profilo({ user, displayName, setDisplayName }) {
+/* ============ PROFILO: nome utente, cambio email/password, categorie ============ */
+function Profilo({ user, displayName, setDisplayName, categories, setCategories }) {
+  const [sub, setSub] = useState("account"); // account | categorie
   const [name, setName] = useState(displayName || "");
   const [nameStatus, setNameStatus] = useState(null);
 
@@ -1642,7 +1653,13 @@ function Profilo({ user, displayName, setDisplayName }) {
   return (
     <div>
       <h1 className="nav-page-title">Profilo</h1>
-      <p className="nav-page-sub">Gestisci nome utente, email e password del tuo account</p>
+      <p className="nav-page-sub">Gestisci account e categorie</p>
+      <div className="tabs-row">
+        <button className={"btn" + (sub === "account" ? " primary" : "")} onClick={() => setSub("account")}><User size={14} />Account</button>
+        <button className={"btn" + (sub === "categorie" ? " primary" : "")} onClick={() => setSub("categorie")}><Tags size={14} />Categorie</button>
+      </div>
+      {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
+      {sub === "account" && (<>
 
       <div className="card" style={{ marginBottom: 18, maxWidth: 420 }}>
         <div className="card-title">Nome utente</div>
@@ -1681,6 +1698,7 @@ function Profilo({ user, displayName, setDisplayName }) {
         </button>
         {passwordStatus && <div className="pill" style={statusStyle(passwordStatus)}>{passwordStatus.text}</div>}
       </div>
+      </>)}
     </div>
   );
 }
