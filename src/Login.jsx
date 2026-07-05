@@ -1,11 +1,12 @@
 import React, { useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { supabase } from "./lib/supabaseClient.js";
 import { GlobalStyle } from "./GlobalStyle.jsx";
 
 export default function Login() {
-  const [mode, setMode] = useState("signin"); // signin | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState(null); // { type: "error" | "info", text }
 
@@ -14,17 +15,8 @@ export default function Login() {
     setLoading(true);
     setMessage(null);
     try {
-      if (mode === "signin") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-      } else {
-        const { data, error } = await supabase.auth.signUp({ email, password });
-        if (error) throw error;
-        if (!data.session) {
-          setMessage({ type: "info", text: "Account creato. Controlla la tua email per confermare l'accesso, poi accedi." });
-          setMode("signin");
-        }
-      }
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) throw error;
     } catch (err) {
       setMessage({ type: "error", text: err.message || "Errore imprevisto." });
     } finally {
@@ -37,9 +29,7 @@ export default function Login() {
       <GlobalStyle />
       <form className="card" onSubmit={submit} style={{ width: "100%", maxWidth: 360 }}>
         <div className="nav-brand" style={{ padding: 0, marginBottom: 4 }}>NAV_</div>
-        <p className="nav-page-sub" style={{ marginBottom: 20 }}>
-          {mode === "signin" ? "Accedi al tuo patrimonio" : "Crea il tuo account"}
-        </p>
+        <p className="nav-page-sub" style={{ marginBottom: 20 }}>Accedi al tuo patrimonio</p>
 
         <div className="field">
           <label className="field-label">Email</label>
@@ -47,8 +37,15 @@ export default function Login() {
         </div>
         <div className="field">
           <label className="field-label">Password</label>
-          <input type="password" required minLength={6} autoComplete={mode === "signin" ? "current-password" : "new-password"}
-            value={password} onChange={(e) => setPassword(e.target.value)} />
+          <div style={{ position: "relative" }}>
+            <input type={showPassword ? "text" : "password"} required minLength={6} autoComplete="current-password"
+              value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%", paddingRight: 36 }} />
+            <button type="button" className="icon-btn" onClick={() => setShowPassword(s => !s)}
+              title={showPassword ? "Nascondi password" : "Mostra password"}
+              style={{ position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)" }}>
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </button>
+          </div>
         </div>
 
         {message && (
@@ -61,13 +58,8 @@ export default function Login() {
           </div>
         )}
 
-        <button className="btn primary" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center", marginBottom: 10 }}>
-          {loading ? "Attendere…" : mode === "signin" ? "Accedi" : "Registrati"}
-        </button>
-
-        <button type="button" className="btn" onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setMessage(null); }}
-          style={{ width: "100%", justifyContent: "center" }}>
-          {mode === "signin" ? "Non hai un account? Registrati" : "Hai già un account? Accedi"}
+        <button className="btn primary" type="submit" disabled={loading} style={{ width: "100%", justifyContent: "center" }}>
+          {loading ? "Attendere…" : "Accedi"}
         </button>
       </form>
     </div>

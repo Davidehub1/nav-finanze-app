@@ -38,6 +38,13 @@ const fmtCHF2 = (n) => {
   if (n === null || n === undefined || isNaN(n)) return "—";
   return n.toLocaleString("it-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
+// Come fmtCHF ma senza il prefisso "CHF": per le tabelle mensili del Patrimonio,
+// dove il contesto (titolo della card) rende la valuta già chiara e lo spazio è poco.
+const fmtNum = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + Math.abs(n).toLocaleString("it-CH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+};
 const uid = () => crypto.randomUUID();
 
 /* ============ AMMORTAMENTO: calcolo valore corrente ============ */
@@ -749,7 +756,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
         return (
           <div className="card" key={g} style={{ marginBottom: 16, overflowX: "auto" }}>
             <div className="card-title">{g}</div>
-            <table className="data-table">
+            <table className="data-table month-table">
               <thead>
                 <tr>
                   <th>Asset</th><th>Cur</th>
@@ -781,7 +788,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
                             <td key={i} className="mono" onClick={() => setExpanded(isSelected ? null : { assetIdx: a.idx, monthIdx: i })}
                               style={{ textAlign: "right", cursor: "pointer", color: val === null ? "#3A4152" : "#E7EBF3", ...(isSelected ? { background: "rgba(91,141,239,0.16)", boxShadow: "inset 0 0 0 1px rgba(91,141,239,0.5)" } : colStyle(i)) }}
                               title="Clicca per vedere quote × prezzo di questo mese">
-                              {val === null ? "·" : fmtCHF2(val)}
+                              {val === null ? "·" : fmtNum(val)}
                             </td>
                           );
                         }
@@ -799,7 +806,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
                           <td key={i} className="mono" onClick={() => !isComputed && setEditing({ assetIdx: a.idx, monthIdx: i })}
                             style={{ textAlign: "right", cursor: isComputed ? "default" : "pointer", color: val === null ? "#3A4152" : explicit || isComputed ? "#E7EBF3" : "#7C8797", ...colStyle(i) }}
                             title={isAmort ? "Calcolato automaticamente dall'ammortamento" : explicit ? "Valore registrato" : "Non ancora compilato — clicca per inserirlo"}>
-                            {val === null ? "·" : fmtCHF2(val)}
+                            {val === null ? "·" : fmtNum(val)}
                           </td>
                         );
                       })}
@@ -832,9 +839,9 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
 
       <div className="card">
         <div className="card-title">Patrimonio netto totale (CHF) — {year}, calcolato dal vivo sugli asset sopra</div>
-        <table className="data-table">
+        <table className="data-table month-table-simple">
           <thead><tr>{MONTHS.map((m, i) => <th key={m} style={{ textAlign: "right", ...colStyle(i) }}>{m}</th>)}</tr></thead>
-          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtCHF(v)}</td>)}</tr></tbody>
+          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtNum(v)}</td>)}</tr></tbody>
         </table>
       </div>
 
@@ -871,7 +878,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
   return (
     <div>
       <div className="card-title">Prezzo per quota — {year} <span style={{ fontWeight: 400, color: "#4E576A", textTransform: "none" }}>(clicca un nome per il grafico, clicca una cella per registrare il prezzo)</span></div>
-      <table className="data-table">
+      <table className="data-table price-table">
         <thead>
           <tr>
             <th>Investimento</th>
