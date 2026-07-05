@@ -12,6 +12,7 @@ create table profiles (
   -- fallback storico del patrimonio netto per i mesi non ricostruibili dai singoli asset
   -- (necessario per non perdere i valori mensili già noti prima del tracking per-asset)
   net_worth_fallback jsonb not null default '{}'::jsonb,
+  display_name text,
   updated_at timestamptz not null default now()
 );
 

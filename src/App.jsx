@@ -6,7 +6,7 @@ import {
 import {
   LayoutDashboard, Receipt, Wallet, Wrench, Tags, Plus, Trash2, X,
   TrendingUp, TrendingDown, ChevronDown, Search, Percent, SplitSquareHorizontal,
-  Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut
+  Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut, User
 } from "lucide-react";
 
 import { PATRIMONIO_SEED, FX_DEFAULT } from "./lib/seedData.js";
@@ -200,7 +200,7 @@ function migratePatrimonio(pat) {
   return out;
 }
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {} };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "" };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -269,7 +269,7 @@ function FinanceApp({ user }) {
     });
   }, []);
 
-  const { expenses, patrimonio, categories, movements, fxRates, prices } = data;
+  const { expenses, patrimonio, categories, movements, fxRates, prices, displayName } = data;
 
   const addExpenses = useCallback((newOnes) => {
     applyChange(prev => ({ ...prev, expenses: [...newOnes.map(x => ({ ...x, id: uid() })), ...prev.expenses] }));
@@ -349,6 +349,9 @@ function FinanceApp({ user }) {
   const setFxRates = useCallback((updater) => {
     applyChange(prev => ({ ...prev, fxRates: typeof updater === "function" ? updater(prev.fxRates) : updater }));
   }, [applyChange]);
+  const setDisplayName = useCallback((name) => {
+    applyChange(prev => ({ ...prev, displayName: name }));
+  }, [applyChange]);
 
   if (!loaded) {
     return (
@@ -371,6 +374,7 @@ function FinanceApp({ user }) {
         {tab === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} />}
         {tab === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
+        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} />}
       </main>
     </div>
   );
@@ -402,6 +406,7 @@ function Sidebar({ tab, setTab }) {
     { id: "movimenti", label: "Movimenti", icon: ArrowLeftRight },
     { id: "strumenti", label: "Strumenti", icon: Wrench },
     { id: "categorie", label: "Categorie", icon: Tags },
+    { id: "profilo", label: "Profilo", icon: User },
   ];
   return (
     <nav className="nav-sidebar">
@@ -1441,6 +1446,117 @@ function Categorie({ categories, setCategories }) {
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ============ PROFILO: nome utente, cambio email e password ============ */
+function Profilo({ user, displayName, setDisplayName }) {
+  const [name, setName] = useState(displayName || "");
+  const [nameStatus, setNameStatus] = useState(null);
+
+  const [email, setEmail] = useState("");
+  const [emailStatus, setEmailStatus] = useState(null);
+  const [emailLoading, setEmailLoading] = useState(false);
+
+  const [password, setPassword] = useState("");
+  const [passwordConfirm, setPasswordConfirm] = useState("");
+  const [passwordStatus, setPasswordStatus] = useState(null);
+  const [passwordLoading, setPasswordLoading] = useState(false);
+
+  const statusStyle = (status) => status && {
+    display: "block", marginTop: 10, padding: "8px 10px",
+    color: status.type === "error" ? "var(--coral)" : "var(--mint)",
+    borderColor: status.type === "error" ? "var(--coral)" : "var(--mint)",
+  };
+
+  const saveName = () => {
+    setDisplayName(name.trim());
+    setNameStatus({ type: "ok", text: "Nome utente salvato." });
+  };
+
+  const changeEmail = async () => {
+    if (!email.trim()) return;
+    setEmailLoading(true);
+    setEmailStatus(null);
+    try {
+      const { error } = await supabase.auth.updateUser({ email: email.trim() });
+      if (error) throw error;
+      setEmailStatus({ type: "ok", text: "Controlla la tua nuova casella email per confermare il cambio." });
+      setEmail("");
+    } catch (e) {
+      setEmailStatus({ type: "error", text: e.message || "Errore durante il cambio email." });
+    } finally {
+      setEmailLoading(false);
+    }
+  };
+
+  const changePassword = async () => {
+    if (password.length < 6) {
+      setPasswordStatus({ type: "error", text: "La password deve avere almeno 6 caratteri." });
+      return;
+    }
+    if (password !== passwordConfirm) {
+      setPasswordStatus({ type: "error", text: "Le due password non coincidono." });
+      return;
+    }
+    setPasswordLoading(true);
+    setPasswordStatus(null);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      setPasswordStatus({ type: "ok", text: "Password aggiornata." });
+      setPassword("");
+      setPasswordConfirm("");
+    } catch (e) {
+      setPasswordStatus({ type: "error", text: e.message || "Errore durante il cambio password." });
+    } finally {
+      setPasswordLoading(false);
+    }
+  };
+
+  return (
+    <div>
+      <h1 className="nav-page-title">Profilo</h1>
+      <p className="nav-page-sub">Gestisci nome utente, email e password del tuo account</p>
+
+      <div className="card" style={{ marginBottom: 18, maxWidth: 420 }}>
+        <div className="card-title">Nome utente</div>
+        <div className="field">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Il tuo nome" style={{ width: "100%" }} />
+        </div>
+        <button className="btn primary" onClick={saveName}><Check size={14} />Salva nome</button>
+        {nameStatus && <div className="pill" style={statusStyle(nameStatus)}>{nameStatus.text}</div>}
+      </div>
+
+      <div className="card" style={{ marginBottom: 18, maxWidth: 420 }}>
+        <div className="card-title">Email</div>
+        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>Email attuale: <strong>{user.email}</strong></p>
+        <div className="field">
+          <label className="field-label">Nuova email</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nuova@email.com" style={{ width: "100%" }} />
+        </div>
+        <button className="btn primary" onClick={changeEmail} disabled={emailLoading}>
+          {emailLoading ? "Attendere…" : "Cambia email"}
+        </button>
+        {emailStatus && <div className="pill" style={statusStyle(emailStatus)}>{emailStatus.text}</div>}
+      </div>
+
+      <div className="card" style={{ maxWidth: 420 }}>
+        <div className="card-title">Password</div>
+        <div className="field">
+          <label className="field-label">Nuova password</label>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ width: "100%" }} />
+        </div>
+        <div className="field">
+          <label className="field-label">Conferma nuova password</label>
+          <input type="password" value={passwordConfirm} onChange={(e) => setPasswordConfirm(e.target.value)} style={{ width: "100%" }} />
+        </div>
+        <button className="btn primary" onClick={changePassword} disabled={passwordLoading}>
+          {passwordLoading ? "Attendere…" : "Cambia password"}
+        </button>
+        {passwordStatus && <div className="pill" style={statusStyle(passwordStatus)}>{passwordStatus.text}</div>}
       </div>
     </div>
   );
