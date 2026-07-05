@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
@@ -37,13 +37,6 @@ const fmtCHF = (n) => {
 const fmtCHF2 = (n) => {
   if (n === null || n === undefined || isNaN(n)) return "—";
   return n.toLocaleString("it-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-};
-// Come fmtCHF ma senza il prefisso "CHF": per le tabelle mensili del Patrimonio,
-// dove il contesto (titolo della card) rende la valuta già chiara e lo spazio è poco.
-const fmtNum = (n) => {
-  if (n === null || n === undefined || isNaN(n)) return "—";
-  const sign = n < 0 ? "-" : "";
-  return sign + Math.abs(n).toLocaleString("it-CH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
 const uid = () => crypto.randomUUID();
 
@@ -377,7 +370,7 @@ function FinanceApp({ user }) {
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} addAsset={addAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} />}
+        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} addAsset={addAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
         {tab === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} />}
         {tab === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
@@ -427,6 +420,18 @@ function Sidebar({ tab, setTab }) {
       ))}
     </nav>
   );
+}
+
+/* ============ RILEVAMENTO MOBILE (per la vista "mese corrente" del Patrimonio) ============ */
+function useIsMobile(breakpoint = 760) {
+  const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= breakpoint);
+  useEffect(() => {
+    const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
+    const handler = (e) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, [breakpoint]);
+  return isMobile;
 }
 
 /* ============ HELPERS DATI ============ */
@@ -694,17 +699,32 @@ function ExpenseFormModal({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice }) {
+function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow }) {
   const [showAssetForm, setShowAssetForm] = useState(false);
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
+  const isMobile = useIsMobile();
+  const [mobileTab, setMobileTab] = useState("corrente"); // corrente | storico
+  const [confirmStatus, setConfirmStatus] = useState(null);
   const yr = patrimonio[year] || { assets: [], netWorth: Array(12).fill(null) };
   const groups = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto"];
   const netWorthSeries = useMemo(() => getStrictNetWorthSeries(yr, fxRates, year, prices), [yr, fxRates, year, prices]);
   const currentMonthIdx = useMemo(() => getCurrentMonthIndex(netWorthSeries), [netWorthSeries]);
   const now = new Date();
   const defaultMonthIdx = currentMonthIdx >= 0 ? Math.min(currentMonthIdx + 1, 11) : (year === now.getFullYear() ? now.getMonth() : 0);
+  const showStorico = !isMobile || mobileTab === "storico";
+
+  const confirmTimers = useRef([]);
+  const confirmMonth = () => {
+    confirmTimers.current.forEach(clearTimeout);
+    setConfirmStatus("saving");
+    saveNow();
+    confirmTimers.current = [
+      setTimeout(() => setConfirmStatus("saved"), 400),
+      setTimeout(() => setConfirmStatus(null), 3000),
+    ];
+  };
 
   const saveCell = (assetIdx, monthIdx, raw) => {
     const num = parseFloat(String(raw).replace(",", "."));
@@ -735,6 +755,23 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
         </div>
       </div>
 
+      {isMobile && (
+        <div className="month-tabs">
+          <button className={"btn" + (mobileTab === "corrente" ? " primary" : "")} onClick={() => setMobileTab("corrente")}>Mese corrente</button>
+          <button className={"btn" + (mobileTab === "storico" ? " primary" : "")} onClick={() => setMobileTab("storico")}>Storico 12 mesi</button>
+        </div>
+      )}
+
+      {isMobile && mobileTab === "corrente" && (
+        <MeseCorrente
+          yr={yr} year={year} monthIdx={defaultMonthIdx} groups={groups}
+          updateAsset={updateAsset} prices={prices} updatePrice={updatePrice}
+          netWorthValue={netWorthSeries[defaultMonthIdx]}
+          onConfirm={confirmMonth} confirmStatus={confirmStatus}
+        />
+      )}
+
+      {showStorico && (<>
       <div className="card" style={{ marginBottom: 16, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         <div className="card-title" style={{ margin: 0 }}>Tassi di cambio</div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
@@ -756,7 +793,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
         return (
           <div className="card" key={g} style={{ marginBottom: 16, overflowX: "auto" }}>
             <div className="card-title">{g}</div>
-            <table className="data-table month-table">
+            <table className="data-table">
               <thead>
                 <tr>
                   <th>Asset</th><th>Cur</th>
@@ -788,7 +825,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
                             <td key={i} className="mono" onClick={() => setExpanded(isSelected ? null : { assetIdx: a.idx, monthIdx: i })}
                               style={{ textAlign: "right", cursor: "pointer", color: val === null ? "#3A4152" : "#E7EBF3", ...(isSelected ? { background: "rgba(91,141,239,0.16)", boxShadow: "inset 0 0 0 1px rgba(91,141,239,0.5)" } : colStyle(i)) }}
                               title="Clicca per vedere quote × prezzo di questo mese">
-                              {val === null ? "·" : fmtNum(val)}
+                              {val === null ? "·" : fmtCHF(val)}
                             </td>
                           );
                         }
@@ -806,7 +843,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
                           <td key={i} className="mono" onClick={() => !isComputed && setEditing({ assetIdx: a.idx, monthIdx: i })}
                             style={{ textAlign: "right", cursor: isComputed ? "default" : "pointer", color: val === null ? "#3A4152" : explicit || isComputed ? "#E7EBF3" : "#7C8797", ...colStyle(i) }}
                             title={isAmort ? "Calcolato automaticamente dall'ammortamento" : explicit ? "Valore registrato" : "Non ancora compilato — clicca per inserirlo"}>
-                            {val === null ? "·" : fmtNum(val)}
+                            {val === null ? "·" : fmtCHF(val)}
                           </td>
                         );
                       })}
@@ -839,11 +876,12 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
 
       <div className="card">
         <div className="card-title">Patrimonio netto totale (CHF) — {year}, calcolato dal vivo sugli asset sopra</div>
-        <table className="data-table month-table-simple">
+        <table className="data-table">
           <thead><tr>{MONTHS.map((m, i) => <th key={m} style={{ textAlign: "right", ...colStyle(i) }}>{m}</th>)}</tr></thead>
-          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtNum(v)}</td>)}</tr></tbody>
+          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtCHF(v)}</td>)}</tr></tbody>
         </table>
       </div>
+      </>)}
 
       {showAssetForm && (
         <AssetFormModal onClose={() => setShowAssetForm(false)} onSave={(asset) => { addAsset(year, asset); setShowAssetForm(false); }} />
@@ -851,6 +889,84 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
       {showUpdateMonth && (
         <UpdateMonthModal yr={yr} year={year} monthIdx={defaultMonthIdx} onClose={() => setShowUpdateMonth(false)}
           onSave={(valuesByIdx) => { bulkUpdateMonth(year, defaultMonthIdx, valuesByIdx); setShowUpdateMonth(false); }} />
+      )}
+    </div>
+  );
+}
+
+/* ============ MESE CORRENTE (mobile): stessa composizione del Patrimonio, ma solo il mese selezionato, righe grandi e comode al tocco ============ */
+function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus }) {
+  const [editing, setEditing] = useState(null); // assetIdx
+  const [expandedIdx, setExpandedIdx] = useState(null); // assetIdx con dettaglio quote×prezzo aperto
+
+  const saveCell = (assetIdx, raw) => {
+    const num = parseFloat(String(raw).replace(",", "."));
+    setEditing(null);
+    if (isNaN(num)) return;
+    const asset = yr.assets[assetIdx];
+    const monthly = [...asset.monthly];
+    monthly[monthIdx] = Math.round(num * 100) / 100;
+    updateAsset(year, assetIdx, { monthly });
+  };
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
+        <div className="card-title" style={{ justifyContent: "center" }}>Patrimonio netto — {MONTHS[monthIdx]} {year}</div>
+        <div className="mono" style={{ fontSize: 28, fontWeight: 700 }}>{netWorthValue === null || netWorthValue === undefined ? "—" : fmtCHF(netWorthValue)}</div>
+      </div>
+
+      {groups.map(g => {
+        const items = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === g);
+        if (items.length === 0) return null;
+        return (
+          <div className="card" key={g} style={{ marginBottom: 16 }}>
+            <div className="card-title">{g}</div>
+            {items.map(a => {
+              const isAmort = a.ammortamento?.enabled;
+              const isPriceLinked = a.units !== undefined && a.units !== null;
+              const isComputed = isAmort || isPriceLinked;
+              const refDate = new Date(year, monthIdx, 1);
+              const { value: val } = getAssetStrictValue(a, monthIdx, refDate, prices, year);
+              const isEditing = editing === a.idx;
+              const isExpanded = expandedIdx === a.idx;
+              return (
+                <div key={a.idx}>
+                  <div className="month-row"
+                    onClick={() => { if (isPriceLinked) setExpandedIdx(isExpanded ? null : a.idx); else if (!isComputed) setEditing(a.idx); }}
+                    style={{ cursor: isComputed && !isPriceLinked ? "default" : "pointer" }}>
+                    <span>
+                      {a.name}
+                      {isAmort && <span className="badge-amort" style={{ marginLeft: 6 }}><Percent size={10} />amm.</span>}
+                      <span className="pill" style={{ marginLeft: 8 }}>{a.currency}</span>
+                    </span>
+                    {isEditing ? (
+                      <input autoFocus className="mono" style={{ width: 120, textAlign: "right" }}
+                        defaultValue={val ?? ""} onClick={(e) => e.stopPropagation()}
+                        onBlur={(e) => saveCell(a.idx, e.target.value)}
+                        onKeyDown={(e) => { if (e.key === "Enter") saveCell(a.idx, e.target.value); if (e.key === "Escape") setEditing(null); }} />
+                    ) : (
+                      <span className="month-row-value mono">{val === null ? "·" : fmtCHF(val)}</span>
+                    )}
+                  </div>
+                  {isExpanded && (
+                    <CellDetailBar asset={a} monthIdx={monthIdx} year={year} prices={prices}
+                      updatePrice={updatePrice} updateAsset={updateAsset} onClose={() => setExpandedIdx(null)} />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
+
+      <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginBottom: 8 }} onClick={onConfirm}>
+        <Check size={15} />Conferma dati di {MONTHS[monthIdx]}
+      </button>
+      {confirmStatus && (
+        <div className="pill" style={{ display: "block", textAlign: "center" }}>
+          {confirmStatus === "saving" ? "Salvataggio…" : "✓ Dati salvati nello storico"}
+        </div>
       )}
     </div>
   );
@@ -878,7 +994,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
   return (
     <div>
       <div className="card-title">Prezzo per quota — {year} <span style={{ fontWeight: 400, color: "#4E576A", textTransform: "none" }}>(clicca un nome per il grafico, clicca una cella per registrare il prezzo)</span></div>
-      <table className="data-table price-table">
+      <table className="data-table">
         <thead>
           <tr>
             <th>Investimento</th>

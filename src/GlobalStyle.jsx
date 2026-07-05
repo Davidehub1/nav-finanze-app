@@ -96,7 +96,7 @@ export function GlobalStyle() {
         .ticker-value { font-size: 18px; }
         .grid-2col-wide, .grid-2col { grid-template-columns: 1fr; }
         .row-2 { grid-template-columns: 1fr; }
-        .card { padding: 14px 8px; }
+        .card { padding: 14px 14px; }
         .modal { padding: 18px; }
         .tabs-row .btn { flex: 1 1 auto; justify-content: center; }
         /* Evita lo zoom automatico di iOS Safari sui campi (richiede font-size >= 16px) */
@@ -104,29 +104,12 @@ export function GlobalStyle() {
         table.data-table { font-size: 12.5px; }
         table.data-table th, table.data-table td { padding: 7px 6px; }
 
-        /* Tabelle mensili (Patrimonio): compattate per stare tutte e 12 senza scroll laterale */
-        table.data-table.month-table, table.data-table.price-table, table.data-table.month-table-simple { font-size: 8px; letter-spacing: -0.3px; width: 100%; table-layout: fixed; }
-        table.data-table.month-table th, table.data-table.month-table td,
-        table.data-table.price-table th, table.data-table.price-table td,
-        table.data-table.month-table-simple th, table.data-table.month-table-simple td {
-          padding: 3px 0; overflow: hidden; border-right: 1px solid rgba(42,49,64,0.6);
-        }
-        table.data-table.month-table th:last-child, table.data-table.month-table td:last-child,
-        table.data-table.price-table th:last-child, table.data-table.price-table td:last-child,
-        table.data-table.month-table-simple th:last-child, table.data-table.month-table-simple td:last-child {
-          border-right: none;
-        }
-        table.data-table.month-table th:first-child, table.data-table.month-table td:first-child,
-        table.data-table.price-table th:first-child, table.data-table.price-table td:first-child {
-          width: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-left: 1px;
-        }
-        table.data-table.month-table th:nth-child(2), table.data-table.month-table td:nth-child(2) { display: none; }
-        table.data-table.month-table th:last-child, table.data-table.month-table td:last-child { padding: 3px 0; width: 9px; }
-        table.data-table.month-table td:last-child .icon-btn { padding: 0; }
-        table.data-table.month-table td:last-child svg, table.data-table.price-table td:last-child svg { width: 11px; height: 11px; }
-        table.data-table.month-table .badge-amort { display: none; }
-        table.data-table.month-table th > div { font-size: 7.5px; }
-        table.data-table.price-table th:nth-last-child(-n+3), table.data-table.price-table td:nth-last-child(-n+3) { display: none; }
+        /* Mese corrente (Patrimonio): righe grandi e comode al tocco */
+        .month-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px; border-bottom: 1px solid rgba(42,49,64,0.5); }
+        .month-row:last-child { border-bottom: none; }
+        .month-row-value { font-size: 17px; font-weight: 600; }
+        .month-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+        .month-tabs .btn { flex: 1; justify-content: center; }
       }
     `}</style>
   );
