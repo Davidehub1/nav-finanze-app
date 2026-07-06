@@ -6,7 +6,8 @@ import {
 import {
   LayoutDashboard, Receipt, Wallet, Wrench, Tags, Plus, Trash2, X,
   TrendingUp, TrendingDown, ChevronDown, Search, Percent, SplitSquareHorizontal,
-  Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut, User
+  Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut, User,
+  ChevronLeft, ChevronRight
 } from "lucide-react";
 
 import { PATRIMONIO_SEED, FX_DEFAULT } from "./lib/seedData.js";
@@ -468,8 +469,15 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
   const nwDelta = prevMonthNW !== null && nwNow !== null ? nwNow - prevMonthNW : null;
   const nwDeltaPct = prevMonthNW ? (nwDelta / prevMonthNW) * 100 : null;
 
-  const speseMese = monthIdx >= 0 ? stats.byMonth[monthIdx] : 0;
-  const entrateMese = monthIdx >= 0 ? stats.byMonthIncome[monthIdx] : 0;
+  // Mese selezionato per entrate/spese/risparmio: parte dal mese di oggi
+  // (o dicembre per gli anni passati) e si naviga con le frecce ‹ ›
+  const nowMonth = new Date().getMonth();
+  const defaultMonth = year === new Date().getFullYear() ? nowMonth : 11;
+  const [selMonth, setSelMonth] = useState(defaultMonth);
+  useEffect(() => { setSelMonth(year === new Date().getFullYear() ? new Date().getMonth() : 11); }, [year]);
+
+  const speseMese = stats.byMonth[selMonth];
+  const entrateMese = stats.byMonthIncome[selMonth];
   const saldoMese = entrateMese - speseMese;
 
   const nwSeries = MONTHS.map((m, i) => ({ mese: m, patrimonio: netWorthSeries[i] ?? null })).filter(d => d.patrimonio !== null);
@@ -486,28 +494,42 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
         <YearSelect year={year} setYear={setYear} />
       </div>
 
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+        <button className="btn" onClick={() => setSelMonth(m => Math.max(0, m - 1))} disabled={selMonth === 0}
+          style={selMonth === 0 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese precedente">
+          <ChevronLeft size={15} />
+        </button>
+        <span className="mono" style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{MONTHS[selMonth]} {year}</span>
+        <button className="btn" onClick={() => setSelMonth(m => Math.min(11, m + 1))} disabled={selMonth === 11}
+          style={selMonth === 11 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese successivo">
+          <ChevronRight size={15} />
+        </button>
+        <span style={{ fontSize: 11.5, color: "#4E576A" }}>scegli il mese di entrate e spese</span>
+      </div>
+
       <div className="ticker">
         <div className="ticker-cell">
-          <div className="ticker-label">Patrimonio netto</div>
+          <div className="ticker-label">Patrimonio netto{monthIdx >= 0 ? ` (${MONTHS[monthIdx]})` : ""}</div>
           <div className="ticker-value mono">{fmtCHF(nwNow)}</div>
           {nwDelta !== null && (
             <div className="ticker-delta" style={{ color: nwDelta >= 0 ? COLORS.mint : COLORS.coral }}>
               {nwDelta >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-              {fmtCHF(Math.abs(nwDelta))} ({nwDeltaPct?.toFixed(1)}%) ultimo mese
+              {fmtCHF(Math.abs(nwDelta))} ({nwDeltaPct?.toFixed(1)}%) vs {MONTHS[monthIdx - 1]}
             </div>
           )}
         </div>
         <div className="ticker-cell">
-          <div className="ticker-label">Entrate ({monthIdx >= 0 ? MONTHS[monthIdx] : "-"})</div>
+          <div className="ticker-label">Entrate ({MONTHS[selMonth]})</div>
           <div className="ticker-value mono" style={{ color: COLORS.mint }}>{fmtCHF(entrateMese)}</div>
         </div>
         <div className="ticker-cell">
-          <div className="ticker-label">Spese ({monthIdx >= 0 ? MONTHS[monthIdx] : "-"})</div>
+          <div className="ticker-label">Spese ({MONTHS[selMonth]})</div>
           <div className="ticker-value mono" style={{ color: COLORS.coral }}>{fmtCHF(speseMese)}</div>
         </div>
         <div className="ticker-cell">
-          <div className="ticker-label">Saldo mensile</div>
+          <div className="ticker-label">Risparmio ({MONTHS[selMonth]})</div>
           <div className="ticker-value mono" style={{ color: saldoMese >= 0 ? COLORS.mint : COLORS.coral }}>{fmtCHF(saldoMese)}</div>
+          <div className="ticker-delta" style={{ color: "#4E576A" }}>entrate − spese del mese</div>
         </div>
       </div>
 
@@ -906,6 +928,8 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
 function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus }) {
   const [editing, setEditing] = useState(null); // assetIdx
   const [expandedIdx, setExpandedIdx] = useState(null); // assetIdx con dettaglio quote×prezzo aperto
+  const investAssets = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === "Investimenti");
+  const colStyle = (i) => i === monthIdx ? { background: "rgba(74,222,156,0.10)", boxShadow: "inset 0 0 0 1px rgba(74,222,156,0.35)" } : {};
 
   const saveCell = (assetIdx, raw) => {
     const num = parseFloat(String(raw).replace(",", "."));
@@ -967,6 +991,12 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
           </div>
         );
       })}
+
+      {investAssets.length > 0 && (
+        <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
+          <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={monthIdx} />
+        </div>
+      )}
 
       <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginBottom: 8 }} onClick={onConfirm}>
         <Check size={15} />Conferma dati di {MONTHS[monthIdx]}

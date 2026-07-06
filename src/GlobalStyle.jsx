@@ -87,7 +87,8 @@ export function GlobalStyle() {
         .nav-brand, .nav-tagline { display: none; }
         .nav-item { flex-direction: column; font-size: 9.5px; gap: 3px; padding: 7px 2px; margin-bottom: 0; text-align: center; flex: 1; }
         .nav-item.active { box-shadow: none; background: var(--bg-raised); border-radius: 10px; }
-        .nav-main { max-width: 100%; padding: 16px 12px calc(84px + env(safe-area-inset-bottom, 0px)); }
+        /* padding-top con safe-area: sull'app installata (PWA) la barra di stato del telefono copre la parte alta */
+        .nav-main { max-width: 100%; padding: calc(20px + env(safe-area-inset-top, 0px)) 12px calc(84px + env(safe-area-inset-bottom, 0px)); }
         .nav-page-title { font-size: 19px; }
         .ticker { flex-wrap: wrap; }
         .ticker-cell { flex: 1 1 50%; border-right: 1px solid var(--border-hair); }
