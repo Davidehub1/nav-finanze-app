@@ -1,4 +1,4 @@
-# NAV_ Finanze
+# Analisi spese
 
 App personale di dashboard finanziaria (spese, patrimonio, movimenti) — Vite + React,
 dati su Supabase, installabile come PWA sul telefono.

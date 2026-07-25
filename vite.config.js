@@ -10,8 +10,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: 'NAV_ Finanze',
-        short_name: 'NAV_',
+        name: 'Analisi spese',
+        short_name: 'Analisi spese',
         description: 'Dashboard personale di spese e patrimonio',
         theme_color: '#0D1017',
         background_color: '#0D1017',

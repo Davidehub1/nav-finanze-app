@@ -407,7 +407,7 @@ function Sidebar({ tab, setTab }) {
   ];
   return (
     <nav className="nav-sidebar">
-      <div className="nav-brand">NAV_<span className="nav-cursor" /></div>
+      <div className="nav-brand">Analisi spese<span className="nav-cursor" /></div>
       <div className="nav-tagline">ledger &amp; terminal personale</div>
       {items.map(it => (
         <button key={it.id} className={"nav-item" + (tab === it.id ? " active" : "")} onClick={() => setTab(it.id)}>

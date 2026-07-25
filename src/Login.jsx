@@ -43,7 +43,7 @@ export default function Login() {
     <div className="nav-root" style={{ alignItems: "center", justifyContent: "center" }}>
       <GlobalStyle />
       <form className="card" onSubmit={submit} style={{ width: "100%", maxWidth: 360 }}>
-        <div className="nav-brand" style={{ padding: 0, marginBottom: 4 }}>NAV_</div>
+        <div className="nav-brand" style={{ padding: 0, marginBottom: 4 }}>Analisi spese</div>
         <p className="nav-page-sub" style={{ marginBottom: 20 }}>
           {mode === "signin" ? "Accedi al tuo patrimonio" : "Crea il tuo account"}
         </p>
