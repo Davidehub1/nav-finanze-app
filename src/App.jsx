@@ -493,17 +493,30 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
   const speseSeries = MONTHS.map((m, i) => ({ mese: m, spese: stats.byMonth[i], entrate: stats.byMonthIncome[i] }));
   const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), key: k, value: Math.round(v * 100) / 100 }));
 
-  // Ripartizione delle spese per categoria del SOLO mese selezionato
+  // Ripartizione delle spese per categoria del mese selezionato, con numero
+  // di spese, media per spesa e confronto col mese precedente.
   const monthBreakdown = useMemo(() => {
-    const byPrimary = {};
+    const cur = {};   // categoria -> { amount, count }
+    const prev = {};  // categoria -> amount (mese precedente)
     for (const e of stats.yExp) {
       if (e.primary === "Entrate") continue;
       const m = parseInt(e.date.slice(5, 7), 10) - 1;
-      if (m !== selMonth) continue;
-      byPrimary[e.primary] = (byPrimary[e.primary] || 0) + e.amount;
+      if (m === selMonth) {
+        cur[e.primary] = cur[e.primary] || { amount: 0, count: 0 };
+        cur[e.primary].amount += e.amount;
+        cur[e.primary].count += 1;
+      } else if (m === selMonth - 1) {
+        prev[e.primary] = (prev[e.primary] || 0) + e.amount;
+      }
     }
-    const rows = Object.entries(byPrimary).sort((a, b) => b[1] - a[1]);
-    const total = rows.reduce((s, [, v]) => s + v, 0);
+    const rows = Object.entries(cur)
+      .map(([cat, { amount, count }]) => ({
+        cat, amount, count,
+        avg: count ? amount / count : 0,
+        delta: amount - (prev[cat] || 0),
+      }))
+      .sort((a, b) => b.amount - a.amount);
+    const total = rows.reduce((s, r) => s + r.amount, 0);
     return { rows, total };
   }, [stats.yExp, selMonth]);
 
@@ -570,30 +583,38 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
         {monthBreakdown.rows.length === 0 ? (
           <div className="empty-state">Nessuna spesa registrata in {MONTHS[selMonth]} {year}</div>
         ) : (
-          <table className="data-table">
-            <thead>
-              <tr><th>Categoria</th><th style={{ textAlign: "right" }}>Importo</th><th style={{ textAlign: "right" }}>% del mese</th></tr>
-            </thead>
-            <tbody>
-              {monthBreakdown.rows.map(([cat, val]) => (
-                <tr key={cat}>
-                  <td>
-                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 3, background: colorFor(cat), flexShrink: 0 }} />
-                      {cat.trim()}
+          <div>
+            {monthBreakdown.rows.map((r) => {
+              const pct = monthBreakdown.total ? (r.amount / monthBreakdown.total) * 100 : 0;
+              const col = colorFor(r.cat);
+              return (
+                <div key={r.cat} style={{ padding: "12px 2px", borderBottom: "1px solid rgba(42,49,64,0.5)" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 7 }}>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: col, flexShrink: 0 }} />
+                      {r.cat.trim()}
                     </span>
-                  </td>
-                  <td className="mono" style={{ textAlign: "right" }}>{fmtCHF2(val)}</td>
-                  <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>{monthBreakdown.total ? Math.round((val / monthBreakdown.total) * 100) + "%" : "—"}</td>
-                </tr>
-              ))}
-              <tr>
-                <td style={{ fontWeight: 700 }}>Totale</td>
-                <td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{fmtCHF2(monthBreakdown.total)}</td>
-                <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>100%</td>
-              </tr>
-            </tbody>
-          </table>
+                    <span className="mono" style={{ fontWeight: 700, fontSize: 15, whiteSpace: "nowrap" }}>{fmtCHF(r.amount)}</span>
+                  </div>
+                  <div style={{ height: 6, borderRadius: 4, background: "var(--bg-raised)", overflow: "hidden", marginBottom: 6 }}>
+                    <div style={{ width: pct + "%", height: "100%", background: col }} />
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11.5, color: "#7C8797", flexWrap: "wrap" }}>
+                    <span>{Math.round(pct)}% del mese · {r.count} {r.count === 1 ? "spesa" : "spese"} · media {fmtCHF(r.avg)}</span>
+                    {selMonth > 0 && (
+                      <span className="mono" style={{ whiteSpace: "nowrap", color: r.delta > 0 ? COLORS.coral : r.delta < 0 ? COLORS.mint : "#4E576A" }}>
+                        {r.delta > 0 ? "▲" : r.delta < 0 ? "▼" : "="} {fmtCHF(Math.abs(r.delta))} vs {MONTHS[selMonth - 1]}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 2px 2px", fontWeight: 700 }}>
+              <span>Totale spese {MONTHS[selMonth]}</span>
+              <span className="mono" style={{ fontSize: 16 }}>{fmtCHF(monthBreakdown.total)}</span>
+            </div>
+          </div>
         )}
       </div>
 
