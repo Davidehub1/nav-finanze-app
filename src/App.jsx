@@ -484,6 +484,20 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
   const speseSeries = MONTHS.map((m, i) => ({ mese: m, spese: stats.byMonth[i], entrate: stats.byMonthIncome[i] }));
   const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), value: Math.round(v * 100) / 100 }));
 
+  // Ripartizione delle spese per categoria del SOLO mese selezionato
+  const monthBreakdown = useMemo(() => {
+    const byPrimary = {};
+    for (const e of stats.yExp) {
+      if (e.primary === "Entrate") continue;
+      const m = parseInt(e.date.slice(5, 7), 10) - 1;
+      if (m !== selMonth) continue;
+      byPrimary[e.primary] = (byPrimary[e.primary] || 0) + e.amount;
+    }
+    const rows = Object.entries(byPrimary).sort((a, b) => b[1] - a[1]);
+    const total = rows.reduce((s, [, v]) => s + v, 0);
+    return { rows, total };
+  }, [stats.yExp, selMonth]);
+
   return (
     <div>
       <div className="page-header">
@@ -531,6 +545,47 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
           <div className="ticker-value mono" style={{ color: saldoMese >= 0 ? COLORS.mint : COLORS.coral }}>{fmtCHF(saldoMese)}</div>
           <div className="ticker-delta" style={{ color: "#4E576A" }}>entrate − spese del mese</div>
         </div>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title" style={{ alignItems: "center" }}>
+          <span>Ripartizione spese — {MONTHS[selMonth]} {year}</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button className="icon-btn" onClick={() => setSelMonth(m => Math.max(0, m - 1))} disabled={selMonth === 0}
+              style={selMonth === 0 ? { opacity: 0.3, cursor: "default" } : {}} title="Mese precedente"><ChevronLeft size={16} /></button>
+            <span className="mono" style={{ fontSize: 12, minWidth: 58, textAlign: "center", color: "var(--text-primary)" }}>{MONTHS[selMonth]} {year}</span>
+            <button className="icon-btn" onClick={() => setSelMonth(m => Math.min(11, m + 1))} disabled={selMonth === 11}
+              style={selMonth === 11 ? { opacity: 0.3, cursor: "default" } : {}} title="Mese successivo"><ChevronRight size={16} /></button>
+          </span>
+        </div>
+        {monthBreakdown.rows.length === 0 ? (
+          <div className="empty-state">Nessuna spesa registrata in {MONTHS[selMonth]} {year}</div>
+        ) : (
+          <table className="data-table">
+            <thead>
+              <tr><th>Categoria</th><th style={{ textAlign: "right" }}>Importo</th><th style={{ textAlign: "right" }}>% del mese</th></tr>
+            </thead>
+            <tbody>
+              {monthBreakdown.rows.map(([cat, val], i) => (
+                <tr key={cat}>
+                  <td>
+                    <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                      {cat.trim()}
+                    </span>
+                  </td>
+                  <td className="mono" style={{ textAlign: "right" }}>{fmtCHF2(val)}</td>
+                  <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>{monthBreakdown.total ? Math.round((val / monthBreakdown.total) * 100) + "%" : "—"}</td>
+                </tr>
+              ))}
+              <tr>
+                <td style={{ fontWeight: 700 }}>Totale</td>
+                <td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{fmtCHF2(monthBreakdown.total)}</td>
+                <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>100%</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
       </div>
 
       <div className="grid-2col-wide">
