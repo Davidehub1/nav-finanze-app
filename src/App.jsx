@@ -369,7 +369,7 @@ function FinanceApp({ user }) {
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
-        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} />}
+        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} />}
         {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} addAsset={addAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
@@ -461,8 +461,17 @@ function lastKnownNW(series) {
 }
 
 /* ============ DASHBOARD ============ */
-function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
+function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories }) {
   const stats = useExpenseStats(expenses, year);
+
+  // Colore fisso per ogni categoria: dipende dalla sua posizione nella lista
+  // delle categorie, NON dalla classifica di spesa. Così una categoria ha
+  // sempre lo stesso colore, uguale nella torta e nella tabella.
+  const colorFor = useMemo(() => {
+    const map = {};
+    Object.keys(categories || {}).forEach((cat, i) => { map[cat] = PIE_COLORS[i % PIE_COLORS.length]; });
+    return (name) => map[name] ?? "#7C8797";
+  }, [categories]);
   const netWorthSeries = useMemo(() => getStrictNetWorthSeries(patrimonio[year], fxRates, year, prices), [patrimonio, year, fxRates, prices]);
   const { value: nwNow, monthIdx } = lastKnownNW(netWorthSeries);
   const prevMonthNW = monthIdx > 0 ? netWorthSeries[monthIdx - 1] : null;
@@ -482,7 +491,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
 
   const nwSeries = MONTHS.map((m, i) => ({ mese: m, patrimonio: netWorthSeries[i] ?? null })).filter(d => d.patrimonio !== null);
   const speseSeries = MONTHS.map((m, i) => ({ mese: m, spese: stats.byMonth[i], entrate: stats.byMonthIncome[i] }));
-  const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), value: Math.round(v * 100) / 100 }));
+  const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), key: k, value: Math.round(v * 100) / 100 }));
 
   // Ripartizione delle spese per categoria del SOLO mese selezionato
   const monthBreakdown = useMemo(() => {
@@ -566,11 +575,11 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
               <tr><th>Categoria</th><th style={{ textAlign: "right" }}>Importo</th><th style={{ textAlign: "right" }}>% del mese</th></tr>
             </thead>
             <tbody>
-              {monthBreakdown.rows.map(([cat, val], i) => (
+              {monthBreakdown.rows.map(([cat, val]) => (
                 <tr key={cat}>
                   <td>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ width: 10, height: 10, borderRadius: 3, background: PIE_COLORS[i % PIE_COLORS.length], flexShrink: 0 }} />
+                      <span style={{ width: 10, height: 10, borderRadius: 3, background: colorFor(cat), flexShrink: 0 }} />
                       {cat.trim()}
                     </span>
                   </td>
@@ -613,7 +622,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices }) {
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
-                  {pieData.map((_, i) => <Cell key={i} fill={PIE_COLORS[i % PIE_COLORS.length]} />)}
+                  {pieData.map((d) => <Cell key={d.key} fill={colorFor(d.key)} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF(v)} />
               </PieChart>
