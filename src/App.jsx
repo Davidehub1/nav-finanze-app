@@ -21,6 +21,13 @@ import { GlobalStyle } from "./GlobalStyle.jsx";
 const MONTHS = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
 const YEARS = [2024, 2025, 2026];
 
+// Categoria delle entrate (non è una spesa) e categoria dei risparmi/investimenti
+// (soldi messi da parte, quindi NON spese di consumo). Entrambe sono escluse dai
+// totali e dalle ripartizioni delle spese.
+const INCOME_CAT = "Entrate";
+const SAVINGS_CAT = "Investimenti e risp";
+const isSpesa = (primary) => primary !== INCOME_CAT && primary !== SAVINGS_CAT;
+
 const COLORS = {
   mint: "#4ADE9C",
   coral: "#FF6B6B",
@@ -437,11 +444,15 @@ function useExpenseStats(expenses, year) {
     const yExp = expenses.filter(e => e.date.startsWith(String(year)));
     const byMonth = Array(12).fill(0);
     const byMonthIncome = Array(12).fill(0);
+    const byMonthSavings = Array(12).fill(0);
     const byPrimary = {};
     for (const e of yExp) {
       const m = parseInt(e.date.slice(5, 7), 10) - 1;
-      if (e.primary === "Entrate") {
+      if (e.primary === INCOME_CAT) {
         byMonthIncome[m] += e.amount;
+      } else if (e.primary === SAVINGS_CAT) {
+        // Risparmi/investimenti: soldi messi da parte, non spese di consumo.
+        byMonthSavings[m] += e.amount;
       } else {
         byMonth[m] += e.amount;
         byPrimary[e.primary] = (byPrimary[e.primary] || 0) + e.amount;
@@ -449,7 +460,7 @@ function useExpenseStats(expenses, year) {
     }
     const totalSpese = byMonth.reduce((a, b) => a + b, 0);
     const totalEntrate = byMonthIncome.reduce((a, b) => a + b, 0);
-    return { yExp, byMonth, byMonthIncome, byPrimary, totalSpese, totalEntrate };
+    return { yExp, byMonth, byMonthIncome, byMonthSavings, byPrimary, totalSpese, totalEntrate };
   }, [expenses, year]);
 }
 
@@ -499,7 +510,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
     const cur = {};   // categoria -> { amount, count }
     const prev = {};  // categoria -> amount (mese precedente)
     for (const e of stats.yExp) {
-      if (e.primary === "Entrate") continue;
+      if (!isSpesa(e.primary)) continue;
       const m = parseInt(e.date.slice(5, 7), 10) - 1;
       if (m === selMonth) {
         cur[e.primary] = cur[e.primary] || { amount: 0, count: 0 };
@@ -695,7 +706,7 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [expenses, filterYear, filterCat, search]);
 
-  const totale = filtered.reduce((s, e) => s + (e.primary === "Entrate" ? 0 : e.amount), 0);
+  const totale = filtered.reduce((s, e) => s + (isSpesa(e.primary) ? e.amount : 0), 0);
   const pageData = filtered.slice(0, page * PER_PAGE);
 
   if (view === "nuova") {
@@ -739,7 +750,7 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
                   <td className="mono" style={{ color: "#7C8797", whiteSpace: "nowrap" }}>{e.date}</td>
                   <td>{e.desc}{e.note ? <span style={{ color: "#4E576A" }}> — {e.note}</span> : null}</td>
                   <td><span className="pill">{e.primary.trim()}{e.secondary ? " / " + e.secondary : ""}</span></td>
-                  <td className="mono" style={{ textAlign: "right", color: e.primary === "Entrate" ? COLORS.mint : "#E7EBF3" }}>{e.primary === "Entrate" ? "+" : ""}{fmtCHF2(e.amount)}</td>
+                  <td className="mono" style={{ textAlign: "right", color: e.primary === INCOME_CAT ? COLORS.mint : e.primary === SAVINGS_CAT ? COLORS.blue : "#E7EBF3" }} title={e.primary === SAVINGS_CAT ? "Risparmio/investimento — non conteggiato tra le spese" : undefined}>{e.primary === INCOME_CAT ? "+" : ""}{fmtCHF2(e.amount)}</td>
                   <td style={{ width: 30 }}><button className="icon-btn" onClick={() => deleteExpense(e.id)}><Trash2 size={14} /></button></td>
                 </tr>
               ))}
