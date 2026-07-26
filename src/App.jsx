@@ -889,12 +889,12 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
       )}
 
       {isMobile && mobileTab === "corrente" && (<>
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
           <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.max(0, m - 1))} disabled={meseCorrenteIdx === 0}
-            style={meseCorrenteIdx === 0 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese precedente"><ChevronLeft size={16} /></button>
-          <span className="mono" style={{ fontWeight: 700, fontSize: 15, minWidth: 96, textAlign: "center" }}>{MONTHS[meseCorrenteIdx]} {year}</span>
+            style={{ flex: 1, justifyContent: "center", padding: "14px 0", ...(meseCorrenteIdx === 0 ? { opacity: 0.4, cursor: "default" } : {}) }} title="Mese precedente"><ChevronLeft size={22} /></button>
+          <span className="mono" style={{ flex: 1.6, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, whiteSpace: "nowrap", background: "var(--bg-raised)", border: "1px solid var(--border-hair)", borderRadius: 7 }}>{MONTHS[meseCorrenteIdx]} {year}</span>
           <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.min(11, m + 1))} disabled={meseCorrenteIdx === 11}
-            style={meseCorrenteIdx === 11 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese successivo"><ChevronRight size={16} /></button>
+            style={{ flex: 1, justifyContent: "center", padding: "14px 0", ...(meseCorrenteIdx === 11 ? { opacity: 0.4, cursor: "default" } : {}) }} title="Mese successivo"><ChevronRight size={22} /></button>
         </div>
         <MeseCorrente
           yr={yr} year={year} monthIdx={meseCorrenteIdx} groups={groups}
