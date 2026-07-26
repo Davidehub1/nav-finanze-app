@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Receipt, Wallet, Wrench, Tags, Plus, Trash2, X,
   TrendingUp, TrendingDown, ChevronDown, Search, Percent, SplitSquareHorizontal,
   Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut, User,
-  ChevronLeft, ChevronRight
+  ChevronLeft, ChevronRight, Download
 } from "lucide-react";
 
 import { PATRIMONIO_SEED, FX_DEFAULT } from "./lib/seedData.js";
@@ -380,7 +380,7 @@ function FinanceApp({ user }) {
         {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
-        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} />}
+        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} />}
       </main>
     </div>
   );
@@ -1725,8 +1725,40 @@ function Categorie({ categories, setCategories }) {
   );
 }
 
-/* ============ PROFILO: nome utente, cambio email/password, categorie ============ */
-function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset }) {
+/* ============ ESPORTAZIONE DATI ============ */
+// Scarica un file generato lato client (nessun server coinvolto).
+function downloadFile(filename, mime, content) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+// Racchiude tra virgolette una cella CSV se contiene virgole, virgolette o a capo.
+const csvCell = (v) => {
+  const s = String(v ?? "");
+  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
+function esportaSpeseCSV(expenses) {
+  const header = ["Data", "Descrizione", "Importo", "Categoria", "Sottocategoria", "Nota"];
+  const rows = [...expenses]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .map((e) => [e.date, e.desc, e.amount, e.primary, e.secondary || "", e.note || ""]);
+  const csv = [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
+  const bom = String.fromCharCode(0xFEFF); // fa aprire bene gli accenti (UTF-8) in Excel
+  downloadFile(`spese-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8", bom + csv);
+}
+function esportaBackupJSON(data) {
+  const payload = { app: "Analisi spese", exportedAt: new Date().toISOString(), version: 1, data };
+  downloadFile(`analisi-spese-backup-${new Date().toISOString().slice(0, 10)}.json`, "application/json", JSON.stringify(payload, null, 2));
+}
+
+/* ============ PROFILO: nome utente, cambio email/password, categorie, esporta ============ */
+function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset, data }) {
   const [sub, setSub] = useState("account"); // account | categorie | asset
   const [showAssetForm, setShowAssetForm] = useState(false);
   const [assetYear, setAssetYear] = useState(() => {
@@ -1799,13 +1831,38 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
   return (
     <div>
       <h1 className="nav-page-title">Profilo</h1>
-      <p className="nav-page-sub">Gestisci account, categorie e asset</p>
+      <p className="nav-page-sub">Gestisci account, categorie, asset ed esporta i tuoi dati</p>
       <div className="tabs-row">
         <button className={"btn" + (sub === "account" ? " primary" : "")} onClick={() => setSub("account")}><User size={14} />Account</button>
         <button className={"btn" + (sub === "categorie" ? " primary" : "")} onClick={() => setSub("categorie")}><Tags size={14} />Categorie</button>
         <button className={"btn" + (sub === "asset" ? " primary" : "")} onClick={() => setSub("asset")}><Wallet size={14} />Asset</button>
+        <button className={"btn" + (sub === "esporta" ? " primary" : "")} onClick={() => setSub("esporta")}><Download size={14} />Esporta</button>
       </div>
       {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
+      {sub === "esporta" && (
+        <div className="card" style={{ maxWidth: 460 }}>
+          <div className="card-title">Esporta i tuoi dati</div>
+          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
+            Scarica una copia dei tuoi dati sul dispositivo. I file vengono generati qui sul telefono/computer,
+            non passano da nessun server.
+          </p>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
+            <button className="btn primary" style={{ justifyContent: "center" }}
+              onClick={() => esportaSpeseCSV(data.expenses)} disabled={!data?.expenses?.length}>
+              <Download size={15} />Spese in CSV{data?.expenses?.length ? ` (${data.expenses.length})` : ""}
+            </button>
+            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Tutte le spese in un foglio, da aprire con Excel o Fogli Google.</span>
+          </div>
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <button className="btn" style={{ justifyContent: "center" }} onClick={() => esportaBackupJSON(data)}>
+              <Save size={15} />Backup completo (JSON)
+            </button>
+            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza.</span>
+          </div>
+        </div>
+      )}
       {sub === "asset" && (
         <div className="card" style={{ maxWidth: 420 }}>
           <div className="card-title">Aggiungi un nuovo asset</div>
