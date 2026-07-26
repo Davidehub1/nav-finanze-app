@@ -830,6 +830,17 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
   const defaultMonthIdx = currentMonthIdx >= 0 ? Math.min(currentMonthIdx + 1, 11) : (year === now.getFullYear() ? now.getMonth() : 0);
   const showStorico = !isMobile || mobileTab === "storico";
 
+  // Mese mostrato nella vista mobile "Mese corrente": sceglibile con le frecce ‹ ›.
+  // Parte dal mese di calendario odierno (o dicembre per gli anni passati).
+  const [meseCorrenteIdx, setMeseCorrenteIdx] = useState(() => {
+    const d = new Date();
+    return year === d.getFullYear() ? d.getMonth() : 11;
+  });
+  useEffect(() => {
+    const d = new Date();
+    setMeseCorrenteIdx(year === d.getFullYear() ? d.getMonth() : 11);
+  }, [year]);
+
   const confirmTimers = useRef([]);
   const confirmMonth = () => {
     confirmTimers.current.forEach(clearTimeout);
@@ -877,14 +888,21 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
         </div>
       )}
 
-      {isMobile && mobileTab === "corrente" && (
+      {isMobile && mobileTab === "corrente" && (<>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, marginBottom: 14 }}>
+          <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.max(0, m - 1))} disabled={meseCorrenteIdx === 0}
+            style={meseCorrenteIdx === 0 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese precedente"><ChevronLeft size={16} /></button>
+          <span className="mono" style={{ fontWeight: 700, fontSize: 15, minWidth: 96, textAlign: "center" }}>{MONTHS[meseCorrenteIdx]} {year}</span>
+          <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.min(11, m + 1))} disabled={meseCorrenteIdx === 11}
+            style={meseCorrenteIdx === 11 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese successivo"><ChevronRight size={16} /></button>
+        </div>
         <MeseCorrente
-          yr={yr} year={year} monthIdx={defaultMonthIdx} groups={groups}
+          yr={yr} year={year} monthIdx={meseCorrenteIdx} groups={groups}
           updateAsset={updateAsset} prices={prices} updatePrice={updatePrice}
-          netWorthValue={netWorthSeries[defaultMonthIdx]}
+          netWorthValue={netWorthSeries[meseCorrenteIdx]}
           onConfirm={confirmMonth} confirmStatus={confirmStatus}
         />
-      )}
+      </>)}
 
       {showStorico && (<>
       <div className="card" style={{ marginBottom: 16, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
