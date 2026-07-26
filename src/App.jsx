@@ -370,10 +370,10 @@ function FinanceApp({ user }) {
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} addAsset={addAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
+        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
-        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} />}
+        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} />}
       </main>
     </div>
   );
@@ -814,8 +814,7 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow }) {
-  const [showAssetForm, setShowAssetForm] = useState(false);
+function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
@@ -877,7 +876,8 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <YearSelect year={year} setYear={setYear} />
           <button className="btn primary" onClick={() => setShowUpdateMonth(true)}><RefreshCw size={14} />Aggiorna {MONTHS[defaultMonthIdx]}</button>
-          <button className="btn" onClick={() => setShowAssetForm(true)}><Plus size={15} />Aggiungi asset</button>
+          {/* Spazio riservato: qui c'era "Aggiungi asset", ora spostato in Profilo → Asset */}
+          <div aria-hidden style={{ flex: "0 0 auto", minWidth: 130 }} />
         </div>
       </div>
 
@@ -1016,9 +1016,6 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, addAsset, deleteAs
       </div>
       </>)}
 
-      {showAssetForm && (
-        <AssetFormModal onClose={() => setShowAssetForm(false)} onSave={(asset) => { addAsset(year, asset); setShowAssetForm(false); }} />
-      )}
       {showUpdateMonth && (
         <UpdateMonthModal yr={yr} year={year} monthIdx={defaultMonthIdx} onClose={() => setShowUpdateMonth(false)}
           onSave={(valuesByIdx) => { bulkUpdateMonth(year, defaultMonthIdx, valuesByIdx); setShowUpdateMonth(false); }} />
@@ -1718,8 +1715,13 @@ function Categorie({ categories, setCategories }) {
 }
 
 /* ============ PROFILO: nome utente, cambio email/password, categorie ============ */
-function Profilo({ user, displayName, setDisplayName, categories, setCategories }) {
-  const [sub, setSub] = useState("account"); // account | categorie
+function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset }) {
+  const [sub, setSub] = useState("account"); // account | categorie | asset
+  const [showAssetForm, setShowAssetForm] = useState(false);
+  const [assetYear, setAssetYear] = useState(() => {
+    const y = new Date().getFullYear();
+    return YEARS.includes(y) ? y : YEARS[YEARS.length - 1];
+  });
   const [name, setName] = useState(displayName || "");
   const [nameStatus, setNameStatus] = useState(null);
 
@@ -1786,12 +1788,34 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories 
   return (
     <div>
       <h1 className="nav-page-title">Profilo</h1>
-      <p className="nav-page-sub">Gestisci account e categorie</p>
+      <p className="nav-page-sub">Gestisci account, categorie e asset</p>
       <div className="tabs-row">
         <button className={"btn" + (sub === "account" ? " primary" : "")} onClick={() => setSub("account")}><User size={14} />Account</button>
         <button className={"btn" + (sub === "categorie" ? " primary" : "")} onClick={() => setSub("categorie")}><Tags size={14} />Categorie</button>
+        <button className={"btn" + (sub === "asset" ? " primary" : "")} onClick={() => setSub("asset")}><Wallet size={14} />Asset</button>
       </div>
       {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
+      {sub === "asset" && (
+        <div className="card" style={{ maxWidth: 420 }}>
+          <div className="card-title">Aggiungi un nuovo asset</div>
+          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 14px" }}>
+            Crea una nuova voce di patrimonio (conto, investimento, mezzo di trasporto…). Scegli in quale anno aggiungerla:
+            comparirà nel foglio Patrimonio di quell'anno.
+          </p>
+          <div className="field">
+            <label className="field-label">Anno</label>
+            <select value={assetYear} onChange={(e) => setAssetYear(Number(e.target.value))} style={{ width: "100%" }}>
+              {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
+          </div>
+          <button className="btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={() => setShowAssetForm(true)}>
+            <Plus size={15} />Aggiungi asset
+          </button>
+        </div>
+      )}
+      {showAssetForm && (
+        <AssetFormModal onClose={() => setShowAssetForm(false)} onSave={(asset) => { addAsset(assetYear, asset); setShowAssetForm(false); }} />
+      )}
       {sub === "account" && (<>
 
       <div className="card" style={{ marginBottom: 18, maxWidth: 420 }}>
