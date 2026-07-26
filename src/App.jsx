@@ -1738,19 +1738,77 @@ function downloadFile(filename, mime, content) {
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-// Racchiude tra virgolette una cella CSV se contiene virgole, virgolette o a capo.
-const csvCell = (v) => {
-  const s = String(v ?? "");
-  return /[",\r\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
-};
-function esportaSpeseCSV(expenses) {
+// Foglio "Spese": tutte le spese ordinate per data.
+function speseAOA(expenses) {
   const header = ["Data", "Descrizione", "Importo", "Categoria", "Sottocategoria", "Nota"];
   const rows = [...expenses]
     .sort((a, b) => a.date.localeCompare(b.date))
     .map((e) => [e.date, e.desc, e.amount, e.primary, e.secondary || "", e.note || ""]);
-  const csv = [header, ...rows].map((r) => r.map(csvCell).join(",")).join("\r\n");
-  const bom = String.fromCharCode(0xFEFF); // fa aprire bene gli accenti (UTF-8) in Excel
-  downloadFile(`spese-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv;charset=utf-8", bom + csv);
+  return [header, ...rows];
+}
+// Foglio "Patrimonio {anno}": valore in CHF di ogni voce, mese per mese, + patrimonio netto.
+function patrimonioAOA(year, data) {
+  const yr = data.patrimonio[year];
+  if (!yr || !yr.assets?.length) return null;
+  const fx = data.fxRates;
+  const chf = (a, i) => {
+    const { value } = getAssetStrictValue(a, i, new Date(year, i, 1), data.prices, year);
+    return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx) * 100) / 100;
+  };
+  const rows = [["Voce", "Gruppo", "Valuta", ...MONTHS]];
+  for (const a of yr.assets) {
+    rows.push([a.name, a.group, a.currency, ...MONTHS.map((_, i) => chf(a, i))]);
+  }
+  const nw = getStrictNetWorthSeries(yr, fx, year, data.prices);
+  rows.push(["PATRIMONIO NETTO (CHF)", "", "", ...nw.map((v) => (v === null || v === undefined) ? "" : Math.round(v))]);
+  return rows;
+}
+// Foglio "Investimenti {anno}": valore fine mese (CHF) e prezzo per quota degli investimenti.
+function investimentiAOA(year, data) {
+  const yr = data.patrimonio[year];
+  const invest = yr?.assets?.filter((a) => a.group === "Investimenti") || [];
+  if (!invest.length) return null;
+  const fx = data.fxRates;
+  const rows = [];
+  rows.push(["VALORE FINE MESE (CHF) = quote × prezzo"]);
+  rows.push(["Investimento", "Quote", ...MONTHS]);
+  for (const a of invest) {
+    const vals = MONTHS.map((_, i) => {
+      const { value } = getAssetStrictValue(a, i, new Date(year, i, 1), data.prices, year);
+      return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx) * 100) / 100;
+    });
+    rows.push([a.name, a.units ?? "", ...vals]);
+  }
+  rows.push([]);
+  rows.push(["PREZZO PER QUOTA (valuta dell'investimento)"]);
+  rows.push(["Investimento", "Prezzo iniziale", ...MONTHS]);
+  for (const a of invest) {
+    const p = data.prices?.[String(year)]?.[a.name];
+    const prices = MONTHS.map((_, i) => {
+      const v = p?.monthly?.[i];
+      return (v === null || v === undefined) ? "" : v;
+    });
+    rows.push([a.name, p?.start ?? "", ...prices]);
+  }
+  return rows;
+}
+// Esporta tutto in un unico file Excel (.xlsx) con più fogli. La libreria xlsx
+// viene caricata solo al momento dell'esportazione (dynamic import).
+async function esportaExcel(data) {
+  const mod = await import("xlsx");
+  const XLSX = mod.utils ? mod : mod.default;
+  const wb = XLSX.utils.book_new();
+  // Nome foglio: Excel ammette max 31 caratteri.
+  const addSheet = (name, aoa) => aoa && XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(aoa), name.slice(0, 31));
+
+  addSheet("Spese", speseAOA(data.expenses));
+  for (const y of Object.keys(data.patrimonio).sort()) {
+    addSheet(`Patrimonio ${y}`, patrimonioAOA(Number(y), data));
+    addSheet(`Investimenti ${y}`, investimentiAOA(Number(y), data));
+  }
+  const out = XLSX.write(wb, { type: "array", bookType: "xlsx" });
+  downloadFile(`analisi-spese-${new Date().toISOString().slice(0, 10)}.xlsx`,
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", out);
 }
 function esportaBackupJSON(data) {
   const payload = { app: "Analisi spese", exportedAt: new Date().toISOString(), version: 1, data };
@@ -1759,7 +1817,21 @@ function esportaBackupJSON(data) {
 
 /* ============ PROFILO: nome utente, cambio email/password, categorie, esporta ============ */
 function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset, data }) {
-  const [sub, setSub] = useState("account"); // account | categorie | asset
+  const [sub, setSub] = useState("account"); // account | categorie | asset | esporta
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState(null);
+  const handleExcel = async () => {
+    setExporting(true);
+    setExportError(null);
+    try {
+      await esportaExcel(data);
+    } catch (e) {
+      console.error("Errore esportazione Excel:", e);
+      setExportError("Errore durante l'esportazione. Riprova.");
+    } finally {
+      setExporting(false);
+    }
+  };
   const [showAssetForm, setShowAssetForm] = useState(false);
   const [assetYear, setAssetYear] = useState(() => {
     const y = new Date().getFullYear();
@@ -1848,18 +1920,22 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
           </p>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 18 }}>
-            <button className="btn primary" style={{ justifyContent: "center" }}
-              onClick={() => esportaSpeseCSV(data.expenses)} disabled={!data?.expenses?.length}>
-              <Download size={15} />Spese in CSV{data?.expenses?.length ? ` (${data.expenses.length})` : ""}
+            <button className="btn primary" style={{ justifyContent: "center" }} onClick={handleExcel} disabled={exporting}>
+              <Download size={15} />{exporting ? "Preparazione…" : "Esporta in Excel (.xlsx)"}
             </button>
-            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Tutte le spese in un foglio, da aprire con Excel o Fogli Google.</span>
+            <span style={{ fontSize: 11.5, color: "#4E576A" }}>
+              Un unico file Excel con più fogli: <strong style={{ color: "#7C8797" }}>Spese</strong>, e per ogni anno
+              il <strong style={{ color: "#7C8797" }}>Patrimonio</strong> (valore di ogni voce mese per mese, con patrimonio netto)
+              e gli <strong style={{ color: "#7C8797" }}>Investimenti</strong> (valore a fine mese e prezzo per quota).
+            </span>
+            {exportError && <span style={{ fontSize: 12, color: "var(--coral)" }}>{exportError}</span>}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <button className="btn" style={{ justifyContent: "center" }} onClick={() => esportaBackupJSON(data)}>
               <Save size={15} />Backup completo (JSON)
             </button>
-            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza.</span>
+            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza, ripristinabile in futuro.</span>
           </div>
         </div>
       )}
