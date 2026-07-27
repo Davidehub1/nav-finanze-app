@@ -317,6 +317,7 @@ function FinanceApp({ user }) {
   const [data, setData] = useState(EMPTY_DATA);
   const [past, setPast] = useState([]);
   const [saveStatus, setSaveStatus] = useState("saved"); // idle | pending | saving | saved
+  const [loadError, setLoadError] = useState(null); // se valorizzato, il salvataggio resta disattivato
   const [year, setYear] = useState(2026);
 
   // Caricamento iniziale da Supabase. Al primissimo accesso non esiste ancora
@@ -333,17 +334,20 @@ function FinanceApp({ user }) {
       } catch (e) {
         console.error("Errore nel caricamento dati da Supabase:", e);
         if (!cancelled) {
-          setSaveStatus("error");
-          setLoaded(true);
+          // Il caricamento è fallito: mostriamo l'app ma NON attiviamo il
+          // salvataggio (loaded resta false), altrimenti salveremmo uno stato
+          // vuoto sopra ai dati veri, cancellandoli.
+          setLoadError(e?.message || "Impossibile caricare i dati.");
         }
       }
     })();
     return () => { cancelled = true; };
   }, [user.id]);
 
-  // Salvataggio automatico (con indicatore di stato)
+  // Salvataggio automatico. Si attiva solo dopo un caricamento riuscito:
+  // salvare senza aver letto i dati significherebbe sovrascriverli con nulla.
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || loadError) return;
     setSaveStatus("pending");
     const t = setTimeout(() => {
       setSaveStatus("saving");
@@ -352,14 +356,15 @@ function FinanceApp({ user }) {
         .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e); setSaveStatus("error"); });
     }, 800);
     return () => clearTimeout(t);
-  }, [data, loaded, user.id]);
+  }, [data, loaded, loadError, user.id]);
 
   const saveNow = useCallback(() => {
+    if (!loaded || loadError) return;
     setSaveStatus("saving");
     persistUserData(user.id, data)
       .then(() => setSaveStatus("saved"))
       .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e); setSaveStatus("error"); });
-  }, [data, user.id]);
+  }, [data, loaded, loadError, user.id]);
 
   // Applica una modifica ai dati registrando lo stato precedente per l'undo
   const applyChange = useCallback((updater) => {
@@ -483,6 +488,27 @@ function FinanceApp({ user }) {
     refreshTrackedPrices().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
+
+  // Caricamento non riuscito: meglio dirlo chiaramente che mostrare un'app
+  // vuota. Il salvataggio resta disattivato, così i dati sul server non
+  // vengono sovrascritti da quello che c'è (nulla) in memoria.
+  if (loadError) {
+    return (
+      <div className="nav-root" style={{ alignItems: "center", justifyContent: "center" }}>
+        <GlobalStyle />
+        <div className="card" style={{ maxWidth: 380, textAlign: "center" }}>
+          <div className="card-title" style={{ justifyContent: "center", color: COLORS.coral }}>Dati non caricati</div>
+          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
+            Non è stato possibile leggere i tuoi dati (probabilmente manca la connessione).
+            I dati sul server sono al sicuro: il salvataggio resta sospeso finché non riesce la lettura.
+          </p>
+          <button className="btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={() => window.location.reload()}>
+            <RefreshCw size={15} />Riprova
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (!loaded) {
     return (

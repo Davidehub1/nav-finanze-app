@@ -11,6 +11,45 @@ async function insertInBatches(table, rows) {
     if (error) throw error;
   }
 }
+async function upsertInBatches(table, rows) {
+  for (let i = 0; i < rows.length; i += INSERT_BATCH_SIZE) {
+    const batch = rows.slice(i, i + INSERT_BATCH_SIZE);
+    const { error } = await supabase.from(table).upsert(batch);
+    if (error) throw error;
+  }
+}
+
+async function deleteByIds(table, ids) {
+  for (let i = 0; i < ids.length; i += INSERT_BATCH_SIZE) {
+    const { error } = await supabase.from(table).delete().in("id", ids.slice(i, i + INSERT_BATCH_SIZE));
+    if (error) throw error;
+  }
+}
+
+// Sincronizza una tabella con id stabili (spese, movimenti) SENZA mai passare da
+// uno stato vuoto: prima scrive/aggiorna le righe presenti, poi elimina solo
+// quelle davvero rimosse. Se una scrittura fallisce, i dati sul server restano
+// quelli di prima invece di sparire (com'era con "cancella tutto e reinserisci").
+async function syncRowsById(table, userId, rows) {
+  const { data: esistenti, error: readErr } = await supabase.from(table).select("id").eq("user_id", userId);
+  if (readErr) throw readErr;
+
+  if (rows.length) await upsertInBatches(table, rows);
+
+  const teneri = new Set(rows.map((r) => r.id));
+  await deleteByIds(table, (esistenti || []).map((r) => r.id).filter((id) => !teneri.has(id)));
+}
+
+// Per le tabelle le cui righe non hanno un id stabile lato app (asset e prezzi,
+// identificati dalla posizione nello stato): scrive prima le nuove righe e solo
+// dopo rimuove quelle vecchie, così non esiste un istante in cui la tabella è vuota.
+async function replaceRows(table, userId, rows) {
+  const { data: precedenti, error: readErr } = await supabase.from(table).select("id").eq("user_id", userId);
+  if (readErr) throw readErr;
+
+  if (rows.length) await insertInBatches(table, rows);
+  await deleteByIds(table, (precedenti || []).map((r) => r.id));
+}
 
 /* ============ Mappatura righe Supabase <-> shape usata dal componente ============ */
 
@@ -220,42 +259,30 @@ export async function persistUserData(userId, data) {
   });
   if (profileErr) throw profileErr;
 
-  const { error: delExpErr } = await supabase.from("expenses").delete().eq("user_id", userId);
-  if (delExpErr) throw delExpErr;
-  if (data.expenses.length) {
-    const rows = data.expenses.map((e) => ({
-      id: e.id,
-      user_id: userId,
-      date: e.date,
-      description: e.desc,
-      amount: e.amount,
-      category_primary: e.primary,
-      category_secondary: e.secondary || null,
-      note: e.note || null,
-    }));
-    await insertInBatches("expenses", rows);
-  }
+  await syncRowsById("expenses", userId, data.expenses.map((e) => ({
+    id: e.id,
+    user_id: userId,
+    date: e.date,
+    description: e.desc,
+    amount: e.amount,
+    category_primary: e.primary,
+    category_secondary: e.secondary || null,
+    note: e.note || null,
+  })));
 
-  const { error: delMovErr } = await supabase.from("movements").delete().eq("user_id", userId);
-  if (delMovErr) throw delMovErr;
-  if (data.movements.length) {
-    const rows = data.movements.map((m) => ({
-      id: m.id,
-      user_id: userId,
-      date: m.date,
-      tipo_label: m.tipoLabel,
-      from_name: m.from ?? null,
-      to_name: m.to ?? null,
-      amount: m.amount ?? null,
-      qty: m.qty ?? null,
-      price: m.price ?? null,
-      note: m.note || null,
-    }));
-    await insertInBatches("movements", rows);
-  }
+  await syncRowsById("movements", userId, data.movements.map((m) => ({
+    id: m.id,
+    user_id: userId,
+    date: m.date,
+    tipo_label: m.tipoLabel,
+    from_name: m.from ?? null,
+    to_name: m.to ?? null,
+    amount: m.amount ?? null,
+    qty: m.qty ?? null,
+    price: m.price ?? null,
+    note: m.note || null,
+  })));
 
-  const { error: delAssetsErr } = await supabase.from("patrimonio_assets").delete().eq("user_id", userId);
-  if (delAssetsErr) throw delAssetsErr;
   const assetRows = [];
   for (const [year, yr] of Object.entries(data.patrimonio)) {
     for (const a of yr.assets) {
@@ -271,10 +298,11 @@ export async function persistUserData(userId, data) {
       });
     }
   }
-  if (assetRows.length) await insertInBatches("patrimonio_assets", assetRows);
+  await replaceRows("patrimonio_assets", userId, assetRows);
 
-  const { error: delPricesErr } = await supabase.from("asset_prices").delete().eq("user_id", userId);
-  if (delPricesErr) throw delPricesErr;
+  // asset_prices ha un vincolo di unicità su (user_id, year, asset_name): qui non
+  // si può inserire prima di cancellare, quindi si aggiorna sul conflitto e si
+  // rimuovono solo le combinazioni anno/asset non più presenti.
   const priceRows = [];
   for (const [year, assets] of Object.entries(data.prices)) {
     for (const [name, p] of Object.entries(assets)) {
@@ -287,5 +315,17 @@ export async function persistUserData(userId, data) {
       });
     }
   }
-  if (priceRows.length) await insertInBatches("asset_prices", priceRows);
+  const { data: prezziEsistenti, error: prErr } = await supabase
+    .from("asset_prices").select("id,year,asset_name").eq("user_id", userId);
+  if (prErr) throw prErr;
+
+  for (let i = 0; i < priceRows.length; i += INSERT_BATCH_SIZE) {
+    const batch = priceRows.slice(i, i + INSERT_BATCH_SIZE);
+    const { error } = await supabase.from("asset_prices").upsert(batch, { onConflict: "user_id,year,asset_name" });
+    if (error) throw error;
+  }
+
+  const chiaviTenute = new Set(priceRows.map((r) => `${r.year}|${r.asset_name}`));
+  await deleteByIds("asset_prices",
+    (prezziEsistenti || []).filter((r) => !chiaviTenute.has(`${r.year}|${r.asset_name}`)).map((r) => r.id));
 }
