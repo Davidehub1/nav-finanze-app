@@ -68,6 +68,7 @@ function rowsToAppData({ profile, expenses, assets, prices, movements }) {
     fxRates: { EURCHF: Number(profile.fx_eurchf), USDCHF: Number(profile.fx_usdchf) },
     prices: prices2,
     displayName: profile.display_name || "",
+    tickers: profile.tickers || {},
   };
 }
 
@@ -210,6 +211,7 @@ export async function persistUserData(userId, data) {
     categories: data.categories,
     net_worth_fallback: netWorthFallback,
     display_name: data.displayName || null,
+    tickers: data.tickers || {},
     updated_at: new Date().toISOString(),
   });
   if (profileErr) throw profileErr;

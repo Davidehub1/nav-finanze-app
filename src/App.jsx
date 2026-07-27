@@ -28,6 +28,9 @@ const INCOME_CAT = "Entrate";
 const SAVINGS_CAT = "Investimenti e risp";
 const isSpesa = (primary) => primary !== INCOME_CAT && primary !== SAVINGS_CAT;
 
+// Valuta interna dell'asset (F/E/D) -> codice valuta di mercato.
+const CURRENCY_OF = { F: "CHF", E: "EUR", D: "USD" };
+
 const COLORS = {
   mint: "#4ADE9C",
   coral: "#FF6B6B",
@@ -207,8 +210,64 @@ function migratePatrimonio(pat) {
   }
   return out;
 }
+/* ============ PREZZI AUTOMATICI ============ */
+// Trova la valuta con cui è impostato un asset (cerca nel patrimonio di ogni anno).
+function currencyOfAsset(patrimonio, assetName) {
+  for (const yr of Object.values(patrimonio || {})) {
+    const a = (yr.assets || []).find((x) => x.name === assetName);
+    if (a) return CURRENCY_OF[a.currency] || null;
+  }
+  return null;
+}
+// Costruisce il parametro per /api/prices nel formato "SIMBOLO:VALUTA" (es. "VHYL.L:CHF"),
+// così il server converte i prezzi nella valuta dell'asset usando il cambio storico.
+function buildPricesQuery(tickers, patrimonio) {
+  const seen = new Map(); // simbolo -> valuta desiderata
+  for (const [assetName, symbol] of Object.entries(tickers || {})) {
+    if (!symbol || seen.has(symbol)) continue;
+    seen.set(symbol, currencyOfAsset(patrimonio, assetName));
+  }
+  if (!seen.size) return "";
+  return [...seen.entries()].map(([sym, want]) => (want ? `${sym}:${want}` : sym)).join(",");
+}
+
+// Dati i risultati di /api/prices (per simbolo: { monthly: {"2026-06":165.27,...} }) e
+// la mappa tickers (nomeAsset -> simbolo), riempie prices[anno][nomeAsset].monthly[].
+// Ritorna lo stesso oggetto se nulla è cambiato (per non innescare salvataggi inutili).
+function applyTrackedPrices(data, results) {
+  const entries = Object.entries(data.tickers || {}).filter(([, sym]) => sym);
+  if (!entries.length) return data;
+  let changed = false;
+  const prices = { ...data.prices };
+  for (const [assetName, symbol] of entries) {
+    const r = results[symbol];
+    if (!r || r.error || !r.monthly) continue;
+    for (const year of YEARS) {
+      const ykey = String(year);
+      const yObj = { ...(prices[ykey] || {}) };
+      const existing = yObj[assetName] || { start: null, monthly: Array(12).fill(null) };
+      const monthly = [...(existing.monthly || Array(12).fill(null))];
+      let touched = false;
+      for (let m = 0; m < 12; m++) {
+        const price = r.monthly[`${year}-${String(m + 1).padStart(2, "0")}`];
+        if (price != null && monthly[m] !== price) { monthly[m] = price; touched = true; }
+      }
+      // "start" = riferimento inizio anno (chiusura di dicembre dell'anno prima, o gennaio)
+      const startVal = r.monthly[`${year - 1}-12`] ?? r.monthly[`${year}-01`];
+      let start = existing.start;
+      if (startVal != null && start !== startVal) { start = startVal; touched = true; }
+      if (touched) {
+        yObj[assetName] = { ...existing, start, monthly };
+        prices[ykey] = yObj;
+        changed = true;
+      }
+    }
+  }
+  return changed ? { ...data, prices } : data;
+}
+
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "" };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {} };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -360,6 +419,29 @@ function FinanceApp({ user }) {
   const setDisplayName = useCallback((name) => {
     applyChange(prev => ({ ...prev, displayName: name }));
   }, [applyChange]);
+  const setTickers = useCallback((updater) => {
+    applyChange(prev => ({ ...prev, tickers: typeof updater === "function" ? updater(prev.tickers || {}) : updater }));
+  }, [applyChange]);
+
+  // Scarica i prezzi degli investimenti configurati (ticker Yahoo) e riempie i
+  // prezzi mensili: chiusura di fine mese per i mesi passati, prezzo corrente per
+  // il mese in corso. Usato sia in automatico all'apertura sia dal pulsante manuale.
+  const refreshTrackedPrices = useCallback(async () => {
+    const query = buildPricesQuery(data.tickers, data.patrimonio);
+    if (!query) return;
+    const res = await fetch(`/api/prices?symbols=${encodeURIComponent(query)}`);
+    if (!res.ok) throw new Error("Errore nel recupero dei prezzi");
+    const json = await res.json();
+    if (json?.results) setData(prev => applyTrackedPrices(prev, json.results));
+  }, [data.tickers, data.patrimonio]);
+
+  // Aggiornamento automatico all'apertura (fallisce in silenzio se offline o
+  // se /api/prices non è disponibile, es. anteprima senza funzione server).
+  useEffect(() => {
+    if (!loaded) return;
+    refreshTrackedPrices().catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   if (!loaded) {
     return (
@@ -377,7 +459,7 @@ function FinanceApp({ user }) {
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} />}
+        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
         {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} />}
@@ -825,7 +907,7 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow }) {
+function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
@@ -1013,7 +1095,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
         if (investAssets.length === 0) return null;
         return (
           <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
-            <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={currentMonthIdx} />
+            <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={currentMonthIdx} tickers={tickers} setTickers={setTickers} onRefreshPrices={onRefreshPrices} />
           </div>
         );
       })()}
@@ -1122,9 +1204,41 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
 }
 
 /* ============ PANNELLO INVESTIMENTI QUOTATI: quote × prezzo, tabella prezzi YTD/MTD, grafico ============ */
-function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentMonthIdx }) {
+function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentMonthIdx, tickers, setTickers, onRefreshPrices }) {
   const [selected, setSelected] = useState(assets[0]?.name || null);
   const [editingPrice, setEditingPrice] = useState(null); // { name, monthIdx }
+  const [showTickerCfg, setShowTickerCfg] = useState(false);
+  const [testResult, setTestResult] = useState({}); // { assetName: { loading|price|currency|error } }
+  const [refreshStatus, setRefreshStatus] = useState(null); // null | "loading" | "done" | "error"
+
+  const refreshNow = async () => {
+    setRefreshStatus("loading");
+    try {
+      await onRefreshPrices();
+      setRefreshStatus("done");
+      setTimeout(() => setRefreshStatus(null), 2500);
+    } catch {
+      setRefreshStatus("error");
+    }
+  };
+
+  const testTicker = async (assetName, symbol, wantCurrency) => {
+    if (!symbol) return;
+    setTestResult(prev => ({ ...prev, [assetName]: { loading: true } }));
+    try {
+      const q = wantCurrency ? `${symbol}:${wantCurrency}` : symbol;
+      const res = await fetch(`/api/prices?symbols=${encodeURIComponent(q)}`);
+      const json = await res.json();
+      const r = json?.results?.[symbol];
+      if (!r || r.error) throw new Error(r?.error || "Nessun dato");
+      setTestResult(prev => ({
+        ...prev,
+        [assetName]: { price: r.current, currency: r.currency, converted: r.converted, fxError: r.fxError },
+      }));
+    } catch (e) {
+      setTestResult(prev => ({ ...prev, [assetName]: { error: e.message || "Errore" } }));
+    }
+  };
 
   const savePriceCell = (name, monthIdx, raw) => {
     const num = parseFloat(String(raw).replace(",", "."));
@@ -1142,7 +1256,67 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
 
   return (
     <div>
-      <div className="card-title">Prezzo per quota — {year} <span style={{ fontWeight: 400, color: "#4E576A", textTransform: "none" }}>(clicca un nome per il grafico, clicca una cella per registrare il prezzo)</span></div>
+      <div className="card-title" style={{ alignItems: "center" }}>
+        <span>Prezzo per quota — {year} <span style={{ fontWeight: 400, color: "#4E576A", textTransform: "none" }}>(clicca un nome per il grafico, clicca una cella per registrare il prezzo)</span></span>
+        {setTickers && (
+          <button className="btn" style={{ padding: "5px 11px", flexShrink: 0 }} onClick={() => setShowTickerCfg(s => !s)}>
+            <RefreshCw size={13} />Prezzi automatici
+          </button>
+        )}
+      </div>
+
+      {setTickers && showTickerCfg && (
+        <div style={{ border: "1px solid var(--border-hair)", borderRadius: 10, padding: 14, marginBottom: 14, background: "var(--bg-void)" }}>
+          <p style={{ fontSize: 12.5, color: "#7C8797", lineHeight: 1.6, margin: "0 0 12px" }}>
+            Per ogni investimento indica il simbolo di <strong>Yahoo Finance</strong> (es. <span className="mono">VWCE.MI</span>, <span className="mono">SYBZ.DE</span>).
+            I prezzi si aggiorneranno da soli a ogni apertura: chiusura di fine mese per i mesi passati, prezzo attuale per il mese in corso.
+            Attenzione alla valuta: dev'essere la stessa con cui hai impostato l'asset.
+          </p>
+          {assets.map(a => {
+            const tr = testResult[a.name];
+            const wantCur = CURRENCY_OF[a.currency];
+            const mismatch = tr?.currency && wantCur && tr.currency !== wantCur;
+            return (
+              <div key={a.name} style={{ marginBottom: 10 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ minWidth: 70, fontWeight: 600, fontSize: 13 }}>{a.name}</span>
+                  <span style={{ fontSize: 11, color: "#4E576A" }} className="mono">({wantCur || a.currency})</span>
+                  <input className="mono" style={{ width: 120 }} placeholder="es. VWCE.MI"
+                    value={tickers?.[a.name] || ""}
+                    onChange={(e) => setTickers(prev => ({ ...prev, [a.name]: e.target.value.trim().toUpperCase() }))} />
+                  <button className="btn" style={{ padding: "6px 11px" }} onClick={() => testTicker(a.name, tickers?.[a.name], wantCur)} disabled={!tickers?.[a.name]}>prova</button>
+                  {tr?.loading && <span style={{ fontSize: 12, color: "#7C8797" }}>…</span>}
+                  {tr?.price != null && (
+                    <span style={{ fontSize: 12, color: mismatch ? COLORS.amber : COLORS.mint }} className="mono">
+                      {tr.price} {tr.currency}{mismatch ? ` ⚠ atteso ${wantCur}` : " ✓"}
+                    </span>
+                  )}
+                  {tr?.error && <span style={{ fontSize: 12, color: COLORS.coral }}>{tr.error}</span>}
+                </div>
+                {/* Verifica della conversione: prezzo originale × cambio = prezzo convertito */}
+                {tr?.converted && (
+                  <div className="mono" style={{ fontSize: 11, color: "#7C8797", marginTop: 3, marginLeft: 78 }}>
+                    {tr.converted.sourcePrice} {tr.converted.from} × {tr.converted.rate} ({tr.converted.from}→{tr.converted.to}) = {tr.price} {tr.converted.to}
+                  </div>
+                )}
+                {tr?.fxError && <div style={{ fontSize: 11, color: COLORS.amber, marginTop: 3, marginLeft: 78 }}>{tr.fxError}</div>}
+              </div>
+            );
+          })}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+            <button className="btn primary" style={{ padding: "8px 14px" }} onClick={refreshNow} disabled={refreshStatus === "loading"}>
+              <RefreshCw size={14} />{refreshStatus === "loading" ? "Aggiornamento…" : "Aggiorna prezzi ora"}
+            </button>
+            {refreshStatus === "done" && <span style={{ fontSize: 12, color: COLORS.mint }}>✓ Prezzi aggiornati</span>}
+            {refreshStatus === "error" && <span style={{ fontSize: 12, color: COLORS.coral }}>Errore. Riprova.</span>}
+          </div>
+          <p style={{ fontSize: 11, color: "#4E576A", margin: "10px 0 0" }}>
+            I prezzi vengono presi da Yahoo Finance (fonte non ufficiale): affidabile ma senza garanzie. Le celle sotto restano comunque modificabili a mano.
+            Si aggiornano anche da soli a ogni apertura dell'app.
+          </p>
+        </div>
+      )}
+
       <table className="data-table">
         <thead>
           <tr>

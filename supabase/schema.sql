@@ -13,6 +13,9 @@ create table profiles (
   -- (necessario per non perdere i valori mensili già noti prima del tracking per-asset)
   net_worth_fallback jsonb not null default '{}'::jsonb,
   display_name text,
+  -- mappa nome asset -> simbolo Yahoo Finance, per l'aggiornamento automatico dei prezzi
+  -- es. {"VWCE": "VWCE.MI", "SYBZ": "SYBZ.DE"}
+  tickers jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
