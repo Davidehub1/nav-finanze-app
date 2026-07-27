@@ -31,6 +31,15 @@ const isSpesa = (primary) => primary !== INCOME_CAT && primary !== SAVINGS_CAT;
 // Valuta interna dell'asset (F/E/D) -> codice valuta di mercato.
 const CURRENCY_OF = { F: "CHF", E: "EUR", D: "USD" };
 
+// Titolo mostrato nell'intestazione per ogni sezione.
+const TAB_TITLES = {
+  dashboard: "Dashboard",
+  patrimonio: "Patrimonio",
+  spese: "Spese",
+  strumenti: "Strumenti",
+  profilo: "Profilo",
+};
+
 const COLORS = {
   mint: "#4ADE9C",
   coral: "#FF6B6B",
@@ -489,7 +498,7 @@ function FinanceApp({ user }) {
       <GlobalStyle />
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
-        <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
+        <AppHeader title={TAB_TITLES[tab]} past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} />}
         {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
@@ -500,19 +509,33 @@ function FinanceApp({ user }) {
   );
 }
 
-/* ============ TOP BAR: annulla ultima modifica + stato salvataggio ============ */
-function TopBar({ past, undo, saveStatus, saveNow, onLogout }) {
-  const label = { idle: "", pending: "Modifiche in sospeso…", saving: "Salvataggio…", saved: "Salvato", error: "Errore di salvataggio" }[saveStatus];
-  const color = saveStatus === "error" ? COLORS.coral : saveStatus === "saved" ? "#7C8797" : COLORS.amber;
+/* ============ INTESTAZIONE: titolo della sezione + stato e azioni discrete ============
+   Titolo e azioni stanno sulla stessa riga, così i dati veri iniziano subito sotto.
+   Le azioni sono icone tenui: "Salva" compare solo se c'è qualcosa da salvare
+   (c'è il salvataggio automatico) e "Annulla" solo se c'è qualcosa da annullare. */
+function AppHeader({ title, past, undo, saveStatus, saveNow, onLogout }) {
+  const stato = {
+    idle: null,
+    pending: { testo: "modifiche in sospeso", colore: COLORS.amber },
+    saving: { testo: "salvataggio…", colore: COLORS.amber },
+    saved: { testo: "salvato", colore: "#4E576A" },
+    error: { testo: "salvataggio non riuscito", colore: COLORS.coral },
+  }[saveStatus];
+  const mostraSalva = saveStatus === "pending" || saveStatus === "error";
+
   return (
-    <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 14, marginBottom: 6 }}>
-      <span className="mono" style={{ fontSize: 11.5, color }}>{label}</span>
-      <button className="btn" onClick={saveNow} title="Forza il salvataggio adesso"><Save size={13} />Salva</button>
-      <button className="btn" onClick={undo} disabled={past.length === 0} title="Annulla l'ultima modifica"
-        style={past.length === 0 ? { opacity: 0.4, cursor: "default" } : {}}>
-        <Undo2 size={14} />Annulla
-      </button>
-      <button className="btn" onClick={onLogout} title="Esci dall'account"><LogOut size={14} />Esci</button>
+    <div className="app-header">
+      <h1 className="nav-page-title" style={{ margin: 0 }}>{title}</h1>
+      <div className="app-header-actions">
+        {stato && <span className="mono" style={{ fontSize: 11, color: stato.colore }}>{stato.testo}</span>}
+        {mostraSalva && (
+          <button className="icon-btn header-action" onClick={saveNow} title="Salva adesso"><Save size={16} /></button>
+        )}
+        {past.length > 0 && (
+          <button className="icon-btn header-action" onClick={undo} title="Annulla l'ultima modifica"><Undo2 size={16} /></button>
+        )}
+        <button className="icon-btn header-action" onClick={onLogout} title="Esci dall'account"><LogOut size={16} /></button>
+      </div>
     </div>
   );
 }
@@ -660,25 +683,10 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1 className="nav-page-title">Dashboard</h1>
-          <p className="nav-page-sub">Panoramica generale del tuo patrimonio e delle tue spese</p>
-        </div>
+      {/* Unica riga di controlli: mese (quello che cambi spesso) e anno. */}
+      <div className="page-toolbar">
+        <MonthStepper month={selMonth} setMonth={setSelMonth} year={year} />
         <YearSelect year={year} setYear={setYear} />
-      </div>
-
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-        <button className="btn" onClick={() => setSelMonth(m => Math.max(0, m - 1))} disabled={selMonth === 0}
-          style={selMonth === 0 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese precedente">
-          <ChevronLeft size={15} />
-        </button>
-        <span className="mono" style={{ fontWeight: 700, fontSize: 15, minWidth: 90, textAlign: "center" }}>{MONTHS[selMonth]} {year}</span>
-        <button className="btn" onClick={() => setSelMonth(m => Math.min(11, m + 1))} disabled={selMonth === 11}
-          style={selMonth === 11 ? { opacity: 0.4, cursor: "default" } : {}} title="Mese successivo">
-          <ChevronRight size={15} />
-        </button>
-        <span style={{ fontSize: 11.5, color: "#4E576A" }}>scegli il mese di entrate e spese</span>
       </div>
 
       <div className="ticker">
@@ -839,6 +847,39 @@ function YearSelect({ year, setYear }) {
   );
 }
 
+/* Selettore del mese: frecce ‹ › con il mese al centro. Su telefono occupa tutta
+   la larghezza disponibile, su schermo grande resta compatto.
+   Se riceve anche setYear, a fine anno prosegue sull'anno accanto (Gen ‹ Dic
+   dell'anno prima): così si naviga il tempo con un solo controllo. */
+function MonthStepper({ month, setMonth, year, setYear }) {
+  const primoAnno = YEARS[0], ultimoAnno = YEARS[YEARS.length - 1];
+  const puoIndietro = month > 0 || (setYear && year > primoAnno);
+  const puoAvanti = month < 11 || (setYear && year < ultimoAnno);
+
+  const indietro = () => {
+    if (month > 0) setMonth(m => m - 1);
+    else if (setYear && year > primoAnno) { setYear(year - 1); setMonth(11); }
+  };
+  const avanti = () => {
+    if (month < 11) setMonth(m => m + 1);
+    else if (setYear && year < ultimoAnno) { setYear(year + 1); setMonth(0); }
+  };
+
+  return (
+    <div className="month-stepper">
+      <button className="btn" onClick={indietro} disabled={!puoIndietro}
+        style={!puoIndietro ? { opacity: 0.4, cursor: "default" } : {}} title="Mese precedente">
+        <ChevronLeft size={16} />
+      </button>
+      <span className="mono month-stepper-label">{MONTHS[month]} {year}</span>
+      <button className="btn" onClick={avanti} disabled={!puoAvanti}
+        style={!puoAvanti ? { opacity: 0.4, cursor: "default" } : {}} title="Mese successivo">
+        <ChevronRight size={16} />
+      </button>
+    </div>
+  );
+}
+
 /* ============ SPESE ============ */
 function Spese({ expenses, categories, addExpenses, deleteExpense }) {
   const [view, setView] = useState("nuova"); // nuova | storico
@@ -865,12 +906,11 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1 className="nav-page-title">Spese</h1>
-          <p className="nav-page-sub">{filtered.length} movimenti — totale spese filtrate: {fmtCHF(totale)}</p>
-        </div>
+      <div className="page-toolbar">
         <button className="btn primary" onClick={() => setView("nuova")}><Plus size={15} />Aggiungi spesa</button>
+        <span style={{ fontSize: 12.5, color: "#7C8797" }}>
+          {filtered.length} voci · <strong style={{ color: "var(--text-primary)" }}>{fmtCHF(totale)}</strong> di spese
+        </span>
       </div>
 
       <div className="tabs-row">
@@ -990,16 +1030,17 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
   const defaultMonthIdx = currentMonthIdx >= 0 ? Math.min(currentMonthIdx + 1, 11) : (year === now.getFullYear() ? now.getMonth() : 0);
   const showStorico = !isMobile || mobileTab === "storico";
 
-  // Mese mostrato nella vista mobile "Mese corrente": sceglibile con le frecce ‹ ›.
+  // Mese mostrato nella vista mobile "Mese corrente": scegliibile con le frecce ‹ ›.
   // Parte dal mese di calendario odierno (o dicembre per gli anni passati).
-  const [meseCorrenteIdx, setMeseCorrenteIdx] = useState(() => {
+  const meseDiDefault = (y) => {
     const d = new Date();
-    return year === d.getFullYear() ? d.getMonth() : 11;
-  });
-  useEffect(() => {
-    const d = new Date();
-    setMeseCorrenteIdx(year === d.getFullYear() ? d.getMonth() : 11);
-  }, [year]);
+    return y === d.getFullYear() ? d.getMonth() : 11;
+  };
+  const [meseCorrenteIdx, setMeseCorrenteIdx] = useState(() => meseDiDefault(year));
+  // Cambiando anno dal selettore si riparte da un mese sensato. Non uso un effetto
+  // su `year` perché le frecce ‹ › cambiano anch'esse l'anno (attraversandolo) e
+  // impostano già il mese giusto: un effetto lo sovrascriverebbe.
+  const cambiaAnno = (y) => { setYear(y); setMeseCorrenteIdx(meseDiDefault(y)); };
 
   const confirmTimers = useRef([]);
   const confirmMonth = () => {
@@ -1026,20 +1067,11 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
 
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1 className="nav-page-title">Patrimonio</h1>
-          <p className="nav-page-sub">
-            Composizione e andamento mensile dei tuoi asset — clicca una cella per compilarla (per gli investimenti, clicca per vedere quote × prezzo)
-            {currentMonthIdx >= 0 && <> · <span style={{ color: COLORS.mint, fontWeight: 600 }}>{MONTHS[currentMonthIdx]} {year}</span> è l'ultimo mese completo</>}
-          </p>
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <YearSelect year={year} setYear={setYear} />
-          <button className="btn primary" onClick={() => setShowUpdateMonth(true)}><RefreshCw size={14} />Aggiorna {MONTHS[defaultMonthIdx]}</button>
-          {/* Spazio riservato: qui c'era "Aggiungi asset", ora spostato in Profilo → Asset */}
-          <div aria-hidden style={{ flex: "0 0 auto", minWidth: 130 }} />
-        </div>
+      {/* Nella vista "mese corrente" il mese mostra già l'anno e le frecce
+          attraversano gli anni: il selettore anno separato sarebbe ridondante. */}
+      <div className="page-toolbar">
+        {showStorico && <YearSelect year={year} setYear={cambiaAnno} />}
+        <button className="btn primary" onClick={() => setShowUpdateMonth(true)}><RefreshCw size={14} />Aggiorna {MONTHS[defaultMonthIdx]}</button>
       </div>
 
       {isMobile && (
@@ -1050,12 +1082,8 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
       )}
 
       {isMobile && mobileTab === "corrente" && (<>
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.max(0, m - 1))} disabled={meseCorrenteIdx === 0}
-            style={{ flex: 1, justifyContent: "center", padding: "14px 0", ...(meseCorrenteIdx === 0 ? { opacity: 0.4, cursor: "default" } : {}) }} title="Mese precedente"><ChevronLeft size={22} /></button>
-          <span className="mono" style={{ flex: 1.6, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700, fontSize: 18, whiteSpace: "nowrap", background: "var(--bg-raised)", border: "1px solid var(--border-hair)", borderRadius: 7 }}>{MONTHS[meseCorrenteIdx]} {year}</span>
-          <button className="btn" onClick={() => setMeseCorrenteIdx(m => Math.min(11, m + 1))} disabled={meseCorrenteIdx === 11}
-            style={{ flex: 1, justifyContent: "center", padding: "14px 0", ...(meseCorrenteIdx === 11 ? { opacity: 0.4, cursor: "default" } : {}) }} title="Mese successivo"><ChevronRight size={22} /></button>
+        <div className="page-toolbar">
+          <MonthStepper month={meseCorrenteIdx} setMonth={setMeseCorrenteIdx} year={year} setYear={setYear} />
         </div>
         <MeseCorrente
           yr={yr} year={year} monthIdx={meseCorrenteIdx} groups={groups}
@@ -1550,11 +1578,7 @@ function Movimenti({ patrimonio, movements, addMovement, deleteMovement, prices 
   const [showForm, setShowForm] = useState(false);
   return (
     <div>
-      <div className="page-header">
-        <div>
-          <h1 className="nav-page-title">Movimenti</h1>
-          <p className="nav-page-sub">Il giornale dei movimenti tra voci del patrimonio: acquisti/vendite di investimenti e giroconti — non tocca le tue spese</p>
-        </div>
+      <div className="page-toolbar">
         <button className="btn primary" onClick={() => setShowForm(true)}><Plus size={15} />Nuovo movimento</button>
       </div>
 
@@ -1712,8 +1736,6 @@ function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses,
   const [sub, setSub] = useState("ammortamento");
   return (
     <div>
-      <h1 className="nav-page-title">Strumenti</h1>
-      <p className="nav-page-sub">Funzioni avanzate per automatizzare i calcoli del tuo bilancio</p>
       <div className="tabs-row">
         <button className={"btn" + (sub === "ammortamento" ? " primary" : "")} onClick={() => setSub("ammortamento")}><Percent size={14} />Ammortamento</button>
         <button className={"btn" + (sub === "split" ? " primary" : "")} onClick={() => setSub("split")}><SplitSquareHorizontal size={14} />Split the bill</button>
@@ -1930,8 +1952,6 @@ function Categorie({ categories, setCategories, budgets, setBudgets }) {
 
   return (
     <div>
-      <h1 className="nav-page-title">Categorie</h1>
-      <p className="nav-page-sub">Gestisci le categorie primarie e secondarie usate per classificare le spese</p>
 
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="card-title">Nuova categoria primaria</div>
@@ -2155,8 +2175,6 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
 
   return (
     <div>
-      <h1 className="nav-page-title">Profilo</h1>
-      <p className="nav-page-sub">Gestisci account, categorie, asset ed esporta i tuoi dati</p>
       <div className="tabs-row">
         <button className={"btn" + (sub === "account" ? " primary" : "")} onClick={() => setSub("account")}><User size={14} />Account</button>
         <button className={"btn" + (sub === "categorie" ? " primary" : "")} onClick={() => setSub("categorie")}><Tags size={14} />Categorie</button>

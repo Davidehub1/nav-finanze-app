@@ -72,6 +72,21 @@ export function GlobalStyle() {
       .icon-btn:hover { color: var(--coral); }
       .badge-amort { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; color: var(--amber); background: rgba(245,184,65,0.12); border:1px solid rgba(245,184,65,0.35); padding:2px 7px; border-radius:100px; font-weight:600; }
       .page-header { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
+
+      /* Intestazione: titolo a sinistra, stato e azioni (icone tenui) a destra */
+      .app-header { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:14px; }
+      .app-header-actions { display:flex; align-items:center; gap:4px; flex-shrink:0; }
+      .header-action { color: var(--text-dim); padding:6px; border-radius:7px; }
+      .header-action:hover { color: var(--text-primary); background: var(--bg-raised); }
+      /* Riga dei controlli di contesto (anno, mese, azioni della sezione) */
+      .page-toolbar { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:18px; }
+      /* Selettore mese: ‹ mese › */
+      .month-stepper { display:flex; align-items:center; gap:6px; }
+      .month-stepper-label {
+        display:flex; align-items:center; justify-content:center; font-weight:700; font-size:14px;
+        min-width:104px; padding:8px 10px; white-space:nowrap;
+        background: var(--bg-raised); border:1px solid var(--border-hair); border-radius:7px;
+      }
       .grid-2col-wide { display:grid; gap:16px; grid-template-columns: 1.4fr 1fr; }
       .grid-2col { display:grid; gap:16px; grid-template-columns: 1fr 1fr; }
 
@@ -104,6 +119,14 @@ export function GlobalStyle() {
         select, input, textarea { font-size: 16px; }
         table.data-table { font-size: 12.5px; }
         table.data-table th, table.data-table td { padding: 7px 6px; }
+
+        /* Su telefono i controlli occupano tutta la larghezza: bersagli grandi,
+           niente spazio sprecato ai lati. */
+        .page-toolbar { gap: 8px; }
+        .month-stepper { flex: 1 1 100%; }
+        .month-stepper .btn { flex: 1; justify-content: center; padding: 12px 0; }
+        .month-stepper-label { flex: 1.6; font-size: 16px; padding: 12px 8px; }
+        .page-toolbar > select { flex: 1 1 auto; }
 
         /* Mese corrente (Patrimonio): righe grandi e comode al tocco */
         .month-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px; border-bottom: 1px solid rgba(42,49,64,0.5); }
