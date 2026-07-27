@@ -19,6 +19,8 @@ create table profiles (
   -- cambi storici mensili verso CHF (chiusura ultimo giorno del mese), scaricati
   -- automaticamente: {"EURCHF": {"2026-06": 0.9224}, "USDCHF": {...}}
   fx_history jsonb not null default '{}'::jsonb,
+  -- budget mensile facoltativo per categoria: {"Cibo superficiale": 200}
+  budgets jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 

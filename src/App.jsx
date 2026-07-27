@@ -299,7 +299,7 @@ function applyTrackedPrices(data, results) {
 }
 
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {} };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {} };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -451,6 +451,9 @@ function FinanceApp({ user }) {
   const setTickers = useCallback((updater) => {
     applyChange(prev => ({ ...prev, tickers: typeof updater === "function" ? updater(prev.tickers || {}) : updater }));
   }, [applyChange]);
+  const setBudgets = useCallback((updater) => {
+    applyChange(prev => ({ ...prev, budgets: typeof updater === "function" ? updater(prev.budgets || {}) : updater }));
+  }, [applyChange]);
 
   // Scarica i prezzi degli investimenti configurati (ticker Yahoo) e riempie i
   // prezzi mensili: chiusura di fine mese per i mesi passati, prezzo corrente per
@@ -487,11 +490,11 @@ function FinanceApp({ user }) {
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
-        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} />}
+        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} />}
         {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
-        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} />}
+        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
       </main>
     </div>
   );
@@ -583,7 +586,7 @@ function lastKnownNW(series) {
 }
 
 /* ============ DASHBOARD ============ */
-function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory }) {
+function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets }) {
   const stats = useExpenseStats(expenses, year);
 
   // Colore fisso per ogni categoria: dipende dalla sua posizione nella lista
@@ -614,6 +617,19 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
   const nwSeries = MONTHS.map((m, i) => ({ mese: m, patrimonio: netWorthSeries[i] ?? null })).filter(d => d.patrimonio !== null);
   const speseSeries = MONTHS.map((m, i) => ({ mese: m, spese: stats.byMonth[i], entrate: stats.byMonthIncome[i] }));
   const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), key: k, value: Math.round(v * 100) / 100 }));
+
+  // Somma dei budget mensili impostati (0 se non ne hai impostato nessuno:
+  // in quel caso nell'interfaccia non compare alcun riferimento ai budget).
+  const budgetTotale = useMemo(
+    () => Object.entries(budgets || {}).reduce((s, [cat, v]) => s + (isSpesa(cat) && v > 0 ? v : 0), 0),
+    [budgets]
+  );
+  // Categorie che hanno un budget: servono per confrontare mele con mele
+  // (il totale del mese include anche categorie senza budget).
+  const catConBudget = useMemo(
+    () => new Set(Object.entries(budgets || {}).filter(([c, v]) => isSpesa(c) && v > 0).map(([c]) => c)),
+    [budgets]
+  );
 
   // Ripartizione delle spese per categoria del mese selezionato, con numero
   // di spese, media per spesa e confronto col mese precedente.
@@ -722,7 +738,16 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
                     <div style={{ width: pct + "%", height: "100%", background: col }} />
                   </div>
                   <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11.5, color: "#7C8797", flexWrap: "wrap" }}>
-                    <span>{Math.round(pct)}% del mese · {r.count} {r.count === 1 ? "spesa" : "spese"} · media {fmtCHF(r.avg)}</span>
+                    <span>
+                      {Math.round(pct)}% del mese · {r.count} {r.count === 1 ? "spesa" : "spese"} · media {fmtCHF(r.avg)}
+                      {/* Budget: compare solo se impostato per questa categoria. Tono neutro
+                          sotto al limite, ambra tenue se superato — nessun allarme invadente. */}
+                      {budgets?.[r.cat] > 0 && (
+                        <span style={{ color: r.amount > budgets[r.cat] ? COLORS.amber : "#7C8797" }}>
+                          {" · "}{Math.round((r.amount / budgets[r.cat]) * 100)}% di {fmtCHF(budgets[r.cat])}
+                        </span>
+                      )}
+                    </span>
                     {selMonth > 0 && (
                       <span className="mono" style={{ whiteSpace: "nowrap", color: r.delta > 0 ? COLORS.coral : r.delta < 0 ? COLORS.mint : "#4E576A" }}>
                         {r.delta > 0 ? "▲" : r.delta < 0 ? "▼" : "="} {fmtCHF(Math.abs(r.delta))} vs {MONTHS[selMonth - 1]}
@@ -733,7 +758,21 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
               );
             })}
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "12px 2px 2px", fontWeight: 700 }}>
-              <span>Totale spese {MONTHS[selMonth]}</span>
+              <span>
+                Totale spese {MONTHS[selMonth]}
+                {budgetTotale > 0 && (() => {
+                  // Confronto solo le spese delle categorie che hanno un budget,
+                  // altrimenti paragonerei il totale del mese a un budget parziale.
+                  const spesoConBudget = monthBreakdown.rows
+                    .filter(r => catConBudget.has(r.cat))
+                    .reduce((s, r) => s + r.amount, 0);
+                  return (
+                    <span style={{ fontWeight: 400, fontSize: 11.5, color: spesoConBudget > budgetTotale ? COLORS.amber : "#4E576A" }}>
+                      {" "}· budget {fmtCHF(spesoConBudget)}/{fmtCHF(budgetTotale)}
+                    </span>
+                  );
+                })()}
+              </span>
               <span className="mono" style={{ fontSize: 16 }}>{fmtCHF(monthBreakdown.total)}</span>
             </div>
           </div>
@@ -1858,9 +1897,22 @@ function SplitBillTool({ categories, addExpenses }) {
 }
 
 /* ============ CATEGORIE ============ */
-function Categorie({ categories, setCategories }) {
+function Categorie({ categories, setCategories, budgets, setBudgets }) {
   const [newPrimary, setNewPrimary] = useState("");
   const [newSecondary, setNewSecondary] = useState({});
+
+  // Budget mensile facoltativo per categoria. Se lasciato vuoto, nell'app non
+  // compare nulla di diverso: il budget è del tutto opzionale e discreto.
+  const setBudget = (cat, raw) => {
+    const v = String(raw).replace(",", ".").trim();
+    setBudgets(prev => {
+      const next = { ...prev };
+      const n = parseFloat(v);
+      if (!v || isNaN(n) || n <= 0) delete next[cat];
+      else next[cat] = Math.round(n * 100) / 100;
+      return next;
+    });
+  };
 
   const addPrimary = () => {
     if (!newPrimary.trim() || categories[newPrimary]) return;
@@ -1905,6 +1957,16 @@ function Categorie({ categories, setCategories }) {
               ))}
               {secs.length === 0 && <span style={{ fontSize: 12, color: "#4E576A" }}>Nessuna sottocategoria</span>}
             </div>
+            {setBudgets && isSpesa(p) && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                <span style={{ fontSize: 11.5, color: "#4E576A" }}>Budget mensile</span>
+                <input type="number" step="10" min="0" placeholder="—" className="mono"
+                  style={{ width: 84, textAlign: "right", padding: "5px 8px" }}
+                  value={budgets?.[p] ?? ""}
+                  onChange={(e) => setBudget(p, e.target.value)} />
+                <span style={{ fontSize: 11.5, color: "#4E576A" }}>CHF</span>
+              </div>
+            )}
             <div style={{ display: "flex", gap: 6 }}>
               <input style={{ flex: 1 }} placeholder="nuova sottocategoria" value={newSecondary[p] || ""} onChange={(e) => setNewSecondary(prev => ({ ...prev, [p]: e.target.value }))} />
               <button className="btn" onClick={() => addSecondary(p)}><Plus size={13} /></button>
@@ -2007,7 +2069,7 @@ function esportaBackupJSON(data) {
 }
 
 /* ============ PROFILO: nome utente, cambio email/password, categorie, esporta ============ */
-function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset, data }) {
+function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset, data, budgets, setBudgets }) {
   const [sub, setSub] = useState("account"); // account | categorie | asset | esporta
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState(null);
@@ -2101,7 +2163,7 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
         <button className={"btn" + (sub === "asset" ? " primary" : "")} onClick={() => setSub("asset")}><Wallet size={14} />Asset</button>
         <button className={"btn" + (sub === "esporta" ? " primary" : "")} onClick={() => setSub("esporta")}><Download size={14} />Esporta</button>
       </div>
-      {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} />}
+      {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} budgets={budgets} setBudgets={setBudgets} />}
       {sub === "esporta" && (
         <div className="card" style={{ maxWidth: 460 }}>
           <div className="card-title">Esporta i tuoi dati</div>
