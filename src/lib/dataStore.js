@@ -69,6 +69,7 @@ function rowsToAppData({ profile, expenses, assets, prices, movements }) {
     prices: prices2,
     displayName: profile.display_name || "",
     tickers: profile.tickers || {},
+    fxHistory: profile.fx_history || {},
   };
 }
 
@@ -212,6 +213,7 @@ export async function persistUserData(userId, data) {
     net_worth_fallback: netWorthFallback,
     display_name: data.displayName || null,
     tickers: data.tickers || {},
+    fx_history: data.fxHistory || {},
     updated_at: new Date().toISOString(),
   });
   if (profileErr) throw profileErr;

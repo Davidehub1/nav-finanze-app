@@ -16,6 +16,9 @@ create table profiles (
   -- mappa nome asset -> simbolo Yahoo Finance, per l'aggiornamento automatico dei prezzi
   -- es. {"VWCE": "VWCE.MI", "SYBZ": "SYBZ.DE"}
   tickers jsonb not null default '{}'::jsonb,
+  -- cambi storici mensili verso CHF (chiusura ultimo giorno del mese), scaricati
+  -- automaticamente: {"EURCHF": {"2026-06": 0.9224}, "USDCHF": {...}}
+  fx_history jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 

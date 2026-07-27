@@ -63,11 +63,22 @@ function computeAmmortamentoValue(cfg, refDate = new Date()) {
   return Math.max(0, Math.round(value * 100) / 100);
 }
 
-/* ============ TASSI DI CAMBIO (default = ultimi noti dal foglio) ============ */
-function fxRate(currency, fx) {
-  if (currency === "E") return fx.EURCHF;
-  if (currency === "D") return fx.USDCHF;
-  return 1; // F = CHF
+/* ============ TASSI DI CAMBIO ============ */
+// I tassi vengono scaricati automaticamente (chiusura dell'ultimo giorno di ogni
+// mese) e conservati in fxHistory: { EURCHF: { "2026-06": 0.9224 }, USDCHF: {...} }.
+// Ogni mese viene quindi convertito col SUO cambio, non con quello di oggi.
+// `fx` resta come ripiego se per quel mese non c'è ancora un tasso scaricato.
+const FX_PAIR_OF = { E: "EURCHF", D: "USDCHF" };
+const monthKey = (year, monthIdx) => `${year}-${String(monthIdx + 1).padStart(2, "0")}`;
+
+function fxRate(currency, fx, fxHistory, year, monthIdx) {
+  const pair = FX_PAIR_OF[currency];
+  if (!pair) return 1; // F = CHF
+  if (fxHistory && year != null && monthIdx != null) {
+    const historical = fxHistory[pair]?.[monthKey(year, monthIdx)];
+    if (historical != null) return historical;
+  }
+  return fx?.[pair] ?? 1;
 }
 
 /* ============ Valore di un asset in un dato mese, con "riporto" dall'ultimo mese noto ============ */
@@ -153,8 +164,9 @@ function isMonthComplete(yr, monthIdx, prices, year) {
   });
 }
 
-/* Serie del patrimonio netto "onesta": solo mesi realmente compilati, il resto vuoto */
-function getStrictNetWorthSeries(yr, fx, year, prices) {
+/* Serie del patrimonio netto "onesta": solo mesi realmente compilati, il resto vuoto.
+   Ogni mese è convertito in CHF col cambio di quel mese (vedi fxRate). */
+function getStrictNetWorthSeries(yr, fx, year, prices, fxHistory) {
   if (!yr) return Array(12).fill(null);
   return Array.from({ length: 12 }, (_, i) => {
     const refDate = new Date(year, i, 1);
@@ -162,7 +174,7 @@ function getStrictNetWorthSeries(yr, fx, year, prices) {
       let sum = 0;
       for (const a of yr.assets) {
         const { value } = getAssetStrictValue(a, i, refDate, prices, year);
-        if (value !== null) sum += value * fxRate(a.currency, fx);
+        if (value !== null) sum += value * fxRate(a.currency, fx, fxHistory, year, i);
       }
       return Math.round(sum * 100) / 100;
     }
@@ -173,21 +185,6 @@ function getStrictNetWorthSeries(yr, fx, year, prices) {
 function getCurrentMonthIndex(series) {
   for (let i = 11; i >= 0; i--) if (series[i] !== null && series[i] !== undefined) return i;
   return -1;
-}
-
-/* ============ Serie mensile del patrimonio netto totale (calcolata dal vivo, con fallback allo storico) ============ */
-function getNetWorthSeries(yr, fx, year) {
-  if (!yr) return Array(12).fill(null);
-  return Array.from({ length: 12 }, (_, i) => {
-    const refDate = new Date(year, i, 1);
-    let sum = 0, any = false;
-    for (const a of yr.assets) {
-      const { value } = getAssetValueAtMonth(a, i, refDate);
-      if (value !== null) { sum += value * fxRate(a.currency, fx); any = true; }
-    }
-    if (any) return Math.round(sum * 100) / 100;
-    return yr.netWorth?.[i] ?? null;
-  });
 }
 
 /* ============ STILE GLOBALE (design system "NAV_") ============ */
@@ -219,16 +216,51 @@ function currencyOfAsset(patrimonio, assetName) {
   }
   return null;
 }
+// Simboli Yahoo dei cambi verso CHF, richiesti solo per le valute realmente
+// usate dagli asset (così il totale di ogni mese usa il cambio di quel mese).
+const FX_SYMBOL = { EURCHF: "EURCHF=X", USDCHF: "USDCHF=X" };
+function neededFxSymbols(patrimonio) {
+  const pairs = new Set();
+  for (const yr of Object.values(patrimonio || {})) {
+    for (const a of yr.assets || []) {
+      const pair = FX_PAIR_OF[a.currency];
+      if (pair) pairs.add(pair);
+    }
+  }
+  return [...pairs].map((p) => FX_SYMBOL[p]);
+}
+
 // Costruisce il parametro per /api/prices nel formato "SIMBOLO:VALUTA" (es. "VHYL.L:CHF"),
 // così il server converte i prezzi nella valuta dell'asset usando il cambio storico.
+// Include anche i cambi verso CHF necessari per i totali del patrimonio.
 function buildPricesQuery(tickers, patrimonio) {
   const seen = new Map(); // simbolo -> valuta desiderata
   for (const [assetName, symbol] of Object.entries(tickers || {})) {
     if (!symbol || seen.has(symbol)) continue;
     seen.set(symbol, currencyOfAsset(patrimonio, assetName));
   }
+  for (const sym of neededFxSymbols(patrimonio)) {
+    if (!seen.has(sym)) seen.set(sym, null); // i cambi non vanno riconvertiti
+  }
   if (!seen.size) return "";
   return [...seen.entries()].map(([sym, want]) => (want ? `${sym}:${want}` : sym)).join(",");
+}
+
+// Estrae dai risultati i tassi di cambio mensili e li conserva in data.fxHistory.
+// Aggiorna anche fxRates (tasso corrente) così resta un ripiego sensato.
+function applyFxHistory(data, results) {
+  const fxHistory = { ...(data.fxHistory || {}) };
+  const fxRates = { ...data.fxRates };
+  let changed = false;
+  for (const [pair, symbol] of Object.entries(FX_SYMBOL)) {
+    const r = results[symbol];
+    if (!r || r.error || !r.monthly) continue;
+    const prev = fxHistory[pair] || {};
+    const next = { ...prev, ...r.monthly };
+    if (JSON.stringify(next) !== JSON.stringify(prev)) { fxHistory[pair] = next; changed = true; }
+    if (r.current != null && fxRates[pair] !== r.current) { fxRates[pair] = r.current; changed = true; }
+  }
+  return changed ? { ...data, fxHistory, fxRates } : data;
 }
 
 // Dati i risultati di /api/prices (per simbolo: { monthly: {"2026-06":165.27,...} }) e
@@ -267,7 +299,7 @@ function applyTrackedPrices(data, results) {
 }
 
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {} };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {} };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -336,7 +368,7 @@ function FinanceApp({ user }) {
     });
   }, []);
 
-  const { expenses, patrimonio, categories, movements, fxRates, prices, displayName } = data;
+  const { expenses, patrimonio, categories, movements, fxRates, prices, displayName, fxHistory } = data;
 
   const addExpenses = useCallback((newOnes) => {
     applyChange(prev => ({ ...prev, expenses: [...newOnes.map(x => ({ ...x, id: uid() })), ...prev.expenses] }));
@@ -413,9 +445,6 @@ function FinanceApp({ user }) {
   const setCategories = useCallback((updater) => {
     applyChange(prev => ({ ...prev, categories: typeof updater === "function" ? updater(prev.categories) : updater }));
   }, [applyChange]);
-  const setFxRates = useCallback((updater) => {
-    applyChange(prev => ({ ...prev, fxRates: typeof updater === "function" ? updater(prev.fxRates) : updater }));
-  }, [applyChange]);
   const setDisplayName = useCallback((name) => {
     applyChange(prev => ({ ...prev, displayName: name }));
   }, [applyChange]);
@@ -432,7 +461,7 @@ function FinanceApp({ user }) {
     const res = await fetch(`/api/prices?symbols=${encodeURIComponent(query)}`);
     if (!res.ok) throw new Error("Errore nel recupero dei prezzi");
     const json = await res.json();
-    if (json?.results) setData(prev => applyTrackedPrices(prev, json.results));
+    if (json?.results) setData(prev => applyFxHistory(applyTrackedPrices(prev, json.results), json.results));
   }, [data.tickers, data.patrimonio]);
 
   // Aggiornamento automatico all'apertura (fallisce in silenzio se offline o
@@ -458,8 +487,8 @@ function FinanceApp({ user }) {
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
         <TopBar past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
-        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} setFxRates={setFxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} />}
+        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} />}
+        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
         {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} />}
@@ -554,7 +583,7 @@ function lastKnownNW(series) {
 }
 
 /* ============ DASHBOARD ============ */
-function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories }) {
+function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory }) {
   const stats = useExpenseStats(expenses, year);
 
   // Colore fisso per ogni categoria: dipende dalla sua posizione nella lista
@@ -565,7 +594,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
     Object.keys(categories || {}).forEach((cat, i) => { map[cat] = PIE_COLORS[i % PIE_COLORS.length]; });
     return (name) => map[name] ?? "#7C8797";
   }, [categories]);
-  const netWorthSeries = useMemo(() => getStrictNetWorthSeries(patrimonio[year], fxRates, year, prices), [patrimonio, year, fxRates, prices]);
+  const netWorthSeries = useMemo(() => getStrictNetWorthSeries(patrimonio[year], fxRates, year, prices, fxHistory), [patrimonio, year, fxRates, prices, fxHistory]);
   const { value: nwNow, monthIdx } = lastKnownNW(netWorthSeries);
   const prevMonthNW = monthIdx > 0 ? netWorthSeries[monthIdx - 1] : null;
   const nwDelta = prevMonthNW !== null && nwNow !== null ? nwNow - prevMonthNW : null;
@@ -907,7 +936,7 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, setFxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices }) {
+function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
@@ -916,7 +945,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
   const [confirmStatus, setConfirmStatus] = useState(null);
   const yr = patrimonio[year] || { assets: [], netWorth: Array(12).fill(null) };
   const groups = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto"];
-  const netWorthSeries = useMemo(() => getStrictNetWorthSeries(yr, fxRates, year, prices), [yr, fxRates, year, prices]);
+  const netWorthSeries = useMemo(() => getStrictNetWorthSeries(yr, fxRates, year, prices, fxHistory), [yr, fxRates, year, prices, fxHistory]);
   const currentMonthIdx = useMemo(() => getCurrentMonthIndex(netWorthSeries), [netWorthSeries]);
   const now = new Date();
   const defaultMonthIdx = currentMonthIdx >= 0 ? Math.min(currentMonthIdx + 1, 11) : (year === now.getFullYear() ? now.getMonth() : 0);
@@ -998,18 +1027,6 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
       </>)}
 
       {showStorico && (<>
-      <div className="card" style={{ marginBottom: 16, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-        <div className="card-title" style={{ margin: 0 }}>Tassi di cambio</div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "#7C8797" }} className="mono">EUR→CHF</span>
-          <input type="number" step="0.0001" style={{ width: 90 }} value={fxRates.EURCHF} onChange={(e) => setFxRates(prev => ({ ...prev, EURCHF: parseFloat(e.target.value) || prev.EURCHF }))} />
-        </div>
-        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <span style={{ fontSize: 12, color: "#7C8797" }} className="mono">USD→CHF</span>
-          <input type="number" step="0.0001" style={{ width: 90 }} value={fxRates.USDCHF} onChange={(e) => setFxRates(prev => ({ ...prev, USDCHF: parseFloat(e.target.value) || prev.USDCHF }))} />
-        </div>
-        <span style={{ fontSize: 11.5, color: "#4E576A" }}>Aggiornali a mano quando servono: senza backend non possiamo tirarli in automatico da Google Finance.</span>
-      </div>
 
       {groups.map(g => {
         const items = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === g);
@@ -1927,13 +1944,13 @@ function patrimonioAOA(year, data) {
   const fx = data.fxRates;
   const chf = (a, i) => {
     const { value } = getAssetStrictValue(a, i, new Date(year, i, 1), data.prices, year);
-    return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx) * 100) / 100;
+    return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx, data.fxHistory, year, i) * 100) / 100;
   };
   const rows = [["Voce", "Gruppo", "Valuta", ...MONTHS]];
   for (const a of yr.assets) {
     rows.push([a.name, a.group, a.currency, ...MONTHS.map((_, i) => chf(a, i))]);
   }
-  const nw = getStrictNetWorthSeries(yr, fx, year, data.prices);
+  const nw = getStrictNetWorthSeries(yr, fx, year, data.prices, data.fxHistory);
   rows.push(["PATRIMONIO NETTO (CHF)", "", "", ...nw.map((v) => (v === null || v === undefined) ? "" : Math.round(v))]);
   return rows;
 }
@@ -1949,7 +1966,7 @@ function investimentiAOA(year, data) {
   for (const a of invest) {
     const vals = MONTHS.map((_, i) => {
       const { value } = getAssetStrictValue(a, i, new Date(year, i, 1), data.prices, year);
-      return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx) * 100) / 100;
+      return (value === null || value === undefined) ? "" : Math.round(value * fxRate(a.currency, fx, data.fxHistory, year, i) * 100) / 100;
     });
     rows.push([a.name, a.units ?? "", ...vals]);
   }
