@@ -120,13 +120,14 @@ export function GlobalStyle() {
         table.data-table { font-size: 12.5px; }
         table.data-table th, table.data-table td { padding: 7px 6px; }
 
-        /* Su telefono i controlli occupano tutta la larghezza: bersagli grandi,
-           niente spazio sprecato ai lati. */
+        /* Su telefono i controlli riempiono la riga: bersagli grandi, niente
+           spazio sprecato ai lati. Lo stepper si adatta a ciò che gli sta
+           accanto (anno, azione) invece di forzare un a capo. */
         .page-toolbar { gap: 8px; }
-        .month-stepper { flex: 1 1 100%; }
-        .month-stepper .btn { flex: 1; justify-content: center; padding: 12px 0; }
-        .month-stepper-label { flex: 1.6; font-size: 16px; padding: 12px 8px; }
-        .page-toolbar > select { flex: 1 1 auto; }
+        .month-stepper { flex: 1 1 200px; }
+        .month-stepper .btn { flex: 0 0 auto; justify-content: center; padding: 12px 14px; }
+        .month-stepper-label { flex: 1; font-size: 15px; padding: 12px 4px; min-width: 0; }
+        .page-toolbar > select, .page-toolbar > .btn { flex: 0 1 auto; }
 
         /* Mese corrente (Patrimonio): righe grandi e comode al tocco */
         .month-row { display: flex; align-items: center; justify-content: space-between; padding: 12px 4px; border-bottom: 1px solid rgba(42,49,64,0.5); }

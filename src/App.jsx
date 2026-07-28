@@ -594,9 +594,16 @@ function useIsMobile(breakpoint = 760) {
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth <= breakpoint);
   useEffect(() => {
     const mq = window.matchMedia(`(max-width: ${breakpoint}px)`);
-    const handler = (e) => setIsMobile(e.matches);
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
+    const aggiorna = () => setIsMobile(mq.matches);
+    aggiorna(); // riallinea subito: la larghezza può essere cambiata prima di qui
+    mq.addEventListener("change", aggiorna);
+    // Rete di sicurezza: alcune situazioni (rotazione del telefono, barra degli
+    // indirizzi che si ritrae) cambiano la larghezza senza emettere "change".
+    window.addEventListener("resize", aggiorna);
+    return () => {
+      mq.removeEventListener("change", aggiorna);
+      window.removeEventListener("resize", aggiorna);
+    };
   }, [breakpoint]);
   return isMobile;
 }
@@ -1093,13 +1100,8 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
 
   return (
     <div>
-      {/* Nella vista "mese corrente" il mese mostra già l'anno e le frecce
-          attraversano gli anni: il selettore anno separato sarebbe ridondante. */}
-      <div className="page-toolbar">
-        {showStorico && <YearSelect year={year} setYear={cambiaAnno} />}
-        <button className="btn primary" onClick={() => setShowUpdateMonth(true)}><RefreshCw size={14} />Aggiorna {MONTHS[defaultMonthIdx]}</button>
-      </div>
-
+      {/* Prima si sceglie la vista, poi il contesto temporale e l'azione:
+          una sola riga di controlli, nello stesso stile della Dashboard. */}
       {isMobile && (
         <div className="month-tabs">
           <button className={"btn" + (mobileTab === "corrente" ? " primary" : "")} onClick={() => setMobileTab("corrente")}>Mese corrente</button>
@@ -1107,10 +1109,22 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
         </div>
       )}
 
+      {/* Nella vista "mese corrente" il mese mostra già l'anno e le frecce
+          attraversano gli anni: il selettore anno separato sarebbe ridondante. */}
+      <div className="page-toolbar">
+        {showStorico
+          ? <YearSelect year={year} setYear={cambiaAnno} />
+          : <MonthStepper month={meseCorrenteIdx} setMonth={setMeseCorrenteIdx} year={year} setYear={setYear} />}
+        {/* Nella vista "mese corrente" ogni voce si tocca direttamente e c'è già
+            "Conferma dati": la compilazione in blocco servirebbe a poco. */}
+        {showStorico && (
+          <button className="btn" onClick={() => setShowUpdateMonth(true)}>
+            <RefreshCw size={14} />Aggiorna {MONTHS[defaultMonthIdx]}
+          </button>
+        )}
+      </div>
+
       {isMobile && mobileTab === "corrente" && (<>
-        <div className="page-toolbar">
-          <MonthStepper month={meseCorrenteIdx} setMonth={setMeseCorrenteIdx} year={year} setYear={setYear} />
-        </div>
         <MeseCorrente
           yr={yr} year={year} monthIdx={meseCorrenteIdx} groups={groups}
           updateAsset={updateAsset} prices={prices} updatePrice={updatePrice}
