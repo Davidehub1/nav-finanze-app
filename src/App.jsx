@@ -1499,7 +1499,9 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
                 <XAxis dataKey="label" stroke="#7C8797" fontSize={10.5} />
                 <YAxis stroke="#7C8797" fontSize={11} domain={["auto", "auto"]} />
                 <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF2(v)} />
-                <Line type="monotone" dataKey="value" stroke={COLORS.blue} strokeWidth={2} dot={{ r: 2.5 }} />
+                {/* Nessun pallino sui punti: la linea resta pulita. Il punto compare
+                    solo al passaggio del mouse, per leggere il valore del mese. */}
+                <Line type="monotone" dataKey="value" stroke={COLORS.blue} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
               </LineChart>
             </ResponsiveContainer>
           )}
