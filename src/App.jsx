@@ -634,13 +634,6 @@ function useExpenseStats(expenses, year) {
   }, [expenses, year]);
 }
 
-function lastKnownNW(series) {
-  for (let i = 11; i >= 0; i--) {
-    if (series[i] !== null && series[i] !== undefined) return { value: series[i], monthIdx: i };
-  }
-  return { value: null, monthIdx: -1 };
-}
-
 /* ============ DASHBOARD ============ */
 function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets }) {
   const stats = useExpenseStats(expenses, year);
@@ -654,17 +647,20 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
     return (name) => map[name] ?? "#7C8797";
   }, [categories]);
   const netWorthSeries = useMemo(() => getStrictNetWorthSeries(patrimonio[year], fxRates, year, prices, fxHistory), [patrimonio, year, fxRates, prices, fxHistory]);
-  const { value: nwNow, monthIdx } = lastKnownNW(netWorthSeries);
-  const prevMonthNW = monthIdx > 0 ? netWorthSeries[monthIdx - 1] : null;
-  const nwDelta = prevMonthNW !== null && nwNow !== null ? nwNow - prevMonthNW : null;
-  const nwDeltaPct = prevMonthNW ? (nwDelta / prevMonthNW) * 100 : null;
 
-  // Mese selezionato per entrate/spese/risparmio: parte dal mese di oggi
-  // (o dicembre per gli anni passati) e si naviga con le frecce ‹ ›
+  // Mese selezionato: vale per tutti i riquadri, patrimonio compreso.
+  // Parte dal mese di oggi (o dicembre per gli anni passati).
   const nowMonth = new Date().getMonth();
   const defaultMonth = year === new Date().getFullYear() ? nowMonth : 11;
   const [selMonth, setSelMonth] = useState(defaultMonth);
   useEffect(() => { setSelMonth(year === new Date().getFullYear() ? new Date().getMonth() : 11); }, [year]);
+
+  // Patrimonio netto DEL MESE SELEZIONATO: lo stesso numero che compare nella
+  // riga in fondo alla scheda Patrimonio. Vuoto se quel mese non è compilato.
+  const nwNow = netWorthSeries[selMonth] ?? null;
+  const prevMonthNW = selMonth > 0 ? netWorthSeries[selMonth - 1] ?? null : null;
+  const nwDelta = prevMonthNW !== null && nwNow !== null ? nwNow - prevMonthNW : null;
+  const nwDeltaPct = prevMonthNW ? (nwDelta / prevMonthNW) * 100 : null;
 
   const speseMese = stats.byMonth[selMonth];
   const entrateMese = stats.byMonthIncome[selMonth];
@@ -724,14 +720,16 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
 
       <div className="ticker">
         <div className="ticker-cell">
-          <div className="ticker-label">Patrimonio netto{monthIdx >= 0 ? ` (${MONTHS[monthIdx]})` : ""}</div>
+          <div className="ticker-label">Patrimonio netto ({MONTHS[selMonth]})</div>
           <div className="ticker-value mono">{fmtCHF(nwNow)}</div>
-          {nwDelta !== null && (
+          {nwDelta !== null ? (
             <div className="ticker-delta" style={{ color: nwDelta >= 0 ? COLORS.mint : COLORS.coral }}>
               {nwDelta >= 0 ? <ArrowUpRight size={13} /> : <ArrowDownRight size={13} />}
-              {fmtCHF(Math.abs(nwDelta))} ({nwDeltaPct?.toFixed(1)}%) vs {MONTHS[monthIdx - 1]}
+              {fmtCHF(Math.abs(nwDelta))} ({nwDeltaPct?.toFixed(1)}%) vs {MONTHS[selMonth - 1]}
             </div>
-          )}
+          ) : nwNow === null ? (
+            <div className="ticker-delta" style={{ color: "#4E576A" }}>mese non ancora compilato</div>
+          ) : null}
         </div>
         <div className="ticker-cell">
           <div className="ticker-label">Entrate ({MONTHS[selMonth]})</div>
