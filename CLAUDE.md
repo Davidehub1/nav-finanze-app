@@ -59,8 +59,10 @@ reale di Davide — **i dati sono veri, non di prova**.
 - **Se il caricamento iniziale fallisce, il salvataggio resta bloccato** e si mostra
   la schermata "Dati non caricati": salvare uno stato vuoto sovrascriverebbe tutto.
 - Le colonne aggiunte a `profiles` nel tempo: `net_worth_fallback`, `display_name`,
-  `tickers`, `fx_history`, `budgets`. Aggiungerne altre richiede un `alter table`
-  che deve eseguire Davide (io non ho accesso alla sua console Supabase).
+  `tickers`, `fx_history`, `budgets`, `fatture`. Aggiungerne altre richiede un
+  `alter table` che deve eseguire Davide (io non ho accesso alla sua console
+  Supabase) **prima** di pubblicare: il salvataggio scrive tutte le colonne
+  insieme, quindi una colonna mancante blocca ogni salvataggio.
 
 ### Convenzioni di calcolo
 
@@ -70,14 +72,26 @@ reale di Davide — **i dati sono veri, non di prova**.
   scaricato da Yahoo. Non esiste più un tasso manuale.
 - Il patrimonio netto mostrato in Dashboard è quello del **mese selezionato** e
   coincide con la riga in fondo alla scheda Patrimonio.
+- Le **fatture pagate in una volta ma di competenza di più mesi** (risconti attivi)
+  si inseriscono in Strumenti → Fatture: lo stesso modulo genera le rate nelle Spese
+  e, nel Patrimonio, la riga calcolata "Fatture già pagate" (gruppo "Altre attività").
+  Quella riga **non è un asset salvato**: si ricalcola sempre da `profiles.fatture`
+  e viene aggiunta in fondo agli asset dell'anno, così le posizioni salvate — su cui
+  si basano `updateAsset`/`deleteAsset` — non cambiano. Il mese del pagamento è già
+  consumato (600 su 12 mesi da maggio ⇒ a fine maggio restano 550).
 - I prezzi degli investimenti si aggiornano da soli all'apertura, tramite i simboli
   Yahoo in `profiles.tickers` (VWCE.MI, SYBZ.DE, VHYL.L→convertito in CHF, UBSG.SW).
 
 ## Stato e cose in sospeso
 
 Funzionante: dashboard, spese, patrimonio (mese corrente + storico), ammortamento,
-split the bill, movimenti, categorie, budget opzionali, prezzi e cambi automatici,
-export Excel/JSON, PWA.
+fatture (rate + risconti attivi), movimenti, categorie, budget opzionali, prezzi e
+cambi automatici, export Excel/JSON, PWA.
+
+Da fare quando Davide lo decide: nel Patrimonio ci sono ancora due righe compilate
+a mano — "Fatture già pagate" e "Fatture ironamn già pagate" in Cash/liquidità —
+che facevano questo lavoro manualmente. Vanno svuotate/cancellate man mano che le
+fatture entrano in Strumenti → Fatture, altrimenti gli importi si contano due volte.
 
 Da valutare, in ordine di utilità (analisi fatta confrontando app simili):
 

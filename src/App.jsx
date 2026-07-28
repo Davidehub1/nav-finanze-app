@@ -19,7 +19,7 @@ import { GlobalStyle } from "./GlobalStyle.jsx";
 
 /* ============ COSTANTI ============ */
 const MONTHS = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
-const YEARS = [2024, 2025, 2026];
+const YEARS = [2024, 2025, 2026, 2027];
 
 // Categoria delle entrate (non è una spesa) e categoria dei risparmi/investimenti
 // (soldi messi da parte, quindi NON spese di consumo). Entrambe sono escluse dai
@@ -72,6 +72,62 @@ function computeAmmortamentoValue(cfg, refDate = new Date()) {
   return Math.max(0, Math.round(value * 100) / 100);
 }
 
+/* ============ FATTURE GIÀ PAGATE (risconti attivi) ============
+   Una fattura pagata tutta in una volta ma di competenza di più mesi (es. 600 CHF
+   di palestra il 20.05.2026 per 12 mesi) non è un costo di maggio: le mensilità non
+   ancora consumate sono ancora patrimonio, solo sotto forma di servizio prepagato.
+   Ogni fattura: { id, desc, amount, paidDate: "2026-05-20", startMonth: "2026-05", months: 12 }.
+   Il residuo si ricalcola sempre da qui: non viene mai salvato fra gli asset. */
+const FATTURE_ASSET = "Fatture già pagate";
+const FATTURE_GROUP = "Altre attività";
+
+const absMonth = (year, monthIdx) => year * 12 + monthIdx;
+const parseMonth = (s) => { const [y, m] = s.split("-").map(Number); return absMonth(y, m - 1); };
+const meseLabel = (abs) => MONTHS[((abs % 12) + 12) % 12] + " " + String(Math.floor(abs / 12)).slice(2);
+
+// Mensilità già consumate alla FINE del mese indicato: il mese in corso è già
+// coperto dall'abbonamento, quindi la sua quota è consumata (a fine maggio di
+// 600/12 mesi partiti a maggio restano 550, non 600).
+function mesiConsumati(f, year, monthIdx) {
+  const passati = absMonth(year, monthIdx) - parseMonth(f.startMonth) + 1;
+  return Math.max(0, Math.min(f.months, passati));
+}
+
+// Residuo di una singola fattura alla fine del mese indicato. Zero prima del
+// pagamento (i soldi erano ancora sul conto) e zero a copertura finita.
+function residuoFattura(f, year, monthIdx) {
+  if (absMonth(year, monthIdx) < parseMonth(f.paidDate.slice(0, 7))) return 0;
+  const rimasti = f.months - mesiConsumati(f, year, monthIdx);
+  return Math.round((f.amount * rimasti / f.months) * 100) / 100;
+}
+
+// Totale dei residui mese per mese: è la riga che finisce nel Patrimonio.
+// Nei mesi senza nulla in sospeso il valore è null (cella vuota) e non zero:
+// la riga parla solo quando ha qualcosa da dire.
+function residuiAnno(fatture, year) {
+  return Array.from({ length: 12 }, (_, i) => {
+    const tot = Math.round((fatture || []).reduce((s, f) => s + residuoFattura(f, year, i), 0) * 100) / 100;
+    return tot > 0 ? tot : null;
+  });
+}
+
+// Riga virtuale del Patrimonio: non è un asset salvato, si ricalcola dalle fatture.
+// Se in quell'anno non c'è nulla di aperto, la riga (e il suo gruppo) non esiste.
+function fattureAsset(fatture, year) {
+  if (!fatture?.length) return null;
+  const monthly = residuiAnno(fatture, year);
+  if (!monthly.some((v) => v > 0)) return null;
+  return { group: FATTURE_GROUP, name: FATTURE_ASSET, currency: "F", monthly, fatture: true };
+}
+
+// L'anno del patrimonio con, in fondo, la riga delle fatture già pagate. In fondo
+// di proposito: così le posizioni degli asset veri restano quelle salvate.
+function annoConFatture(yr, fatture, year) {
+  const base = yr || { assets: [], netWorth: Array(12).fill(null) };
+  const extra = fattureAsset(fatture, year);
+  return extra ? { ...base, assets: [...base.assets, extra] } : base;
+}
+
 /* ============ TASSI DI CAMBIO ============ */
 // I tassi vengono scaricati automaticamente (chiusura dell'ultimo giorno di ogni
 // mese) e conservati in fxHistory: { EURCHF: { "2026-06": 0.9224 }, USDCHF: {...} }.
@@ -111,7 +167,7 @@ function getAssetValueAtMonth(asset, monthIdx, refDate, prices, year) {
 }
 
 /* ============ PREZZI PER QUOTA: helper ============ */
-const PRICE_YEARS = ["2024", "2025", "2026"];
+const PRICE_YEARS = ["2024", "2025", "2026", "2027"];
 
 // Serie continua di tutti i mesi con prezzo registrato, in ordine cronologico, per un dato asset
 function getPriceTimeline(prices, assetName) {
@@ -162,7 +218,9 @@ function getAssetStrictValue(asset, monthIdx, refDate, prices, year) {
 }
 
 function isMonthComplete(yr, monthIdx, prices, year) {
-  const trackable = yr.assets.filter(a => !a.ammortamento?.enabled);
+  // Ammortamenti e fatture già pagate si calcolano da soli: non dicono nulla su
+  // quanto il mese sia stato compilato, quindi restano fuori dal conteggio.
+  const trackable = yr.assets.filter(a => !a.ammortamento?.enabled && !a.fatture);
   if (trackable.length === 0) return false;
   return trackable.every(a => {
     if (a.units !== undefined && a.units !== null) {
@@ -308,7 +366,7 @@ function applyTrackedPrices(data, results) {
 }
 
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {} };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {}, fatture: [] };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -382,7 +440,14 @@ function FinanceApp({ user }) {
     });
   }, []);
 
-  const { expenses, patrimonio, categories, movements, fxRates, prices, displayName, fxHistory } = data;
+  const { expenses, patrimonio, categories, movements, fxRates, prices, displayName, fxHistory, fatture } = data;
+
+  const addFattura = useCallback((f) => {
+    applyChange(prev => ({ ...prev, fatture: [...(prev.fatture || []), { ...f, id: uid() }] }));
+  }, [applyChange]);
+  const deleteFattura = useCallback((id) => {
+    applyChange(prev => ({ ...prev, fatture: (prev.fatture || []).filter(f => f.id !== id) }));
+  }, [applyChange]);
 
   const addExpenses = useCallback((newOnes) => {
     applyChange(prev => ({ ...prev, expenses: [...newOnes.map(x => ({ ...x, id: uid() })), ...prev.expenses] }));
@@ -525,10 +590,10 @@ function FinanceApp({ user }) {
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
         <AppHeader title={TAB_TITLES[tab]} past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
-        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} />}
+        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} fatture={fatture} />}
+        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
-        {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
+        {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
         {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
       </main>
     </div>
@@ -635,7 +700,7 @@ function useExpenseStats(expenses, year) {
 }
 
 /* ============ DASHBOARD ============ */
-function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets }) {
+function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets, fatture }) {
   const stats = useExpenseStats(expenses, year);
 
   // Colore fisso per ogni categoria: dipende dalla sua posizione nella lista
@@ -646,7 +711,12 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
     Object.keys(categories || {}).forEach((cat, i) => { map[cat] = PIE_COLORS[i % PIE_COLORS.length]; });
     return (name) => map[name] ?? "#7C8797";
   }, [categories]);
-  const netWorthSeries = useMemo(() => getStrictNetWorthSeries(patrimonio[year], fxRates, year, prices, fxHistory), [patrimonio, year, fxRates, prices, fxHistory]);
+  // Le fatture già pagate entrano nel patrimonio esattamente come nella scheda
+  // Patrimonio, così i due numeri restano lo stesso numero.
+  const netWorthSeries = useMemo(
+    () => getStrictNetWorthSeries(annoConFatture(patrimonio[year], fatture, year), fxRates, year, prices, fxHistory),
+    [patrimonio, fatture, year, fxRates, prices, fxHistory]
+  );
 
   // Mese selezionato: vale per tutti i riquadri, patrimonio compreso.
   // Parte dal mese di oggi (o dicembre per gli anni passati).
@@ -1046,15 +1116,18 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory }) {
+function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory, fatture }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
   const isMobile = useIsMobile();
   const [mobileTab, setMobileTab] = useState("corrente"); // corrente | storico
   const [confirmStatus, setConfirmStatus] = useState(null);
-  const yr = patrimonio[year] || { assets: [], netWorth: Array(12).fill(null) };
-  const groups = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto"];
+  // `yrReale` sono gli asset salvati; `yr` è la stessa cosa più la riga calcolata
+  // delle fatture già pagate, aggiunta in fondo (le posizioni salvate non cambiano).
+  const yrReale = patrimonio[year] || { assets: [], netWorth: Array(12).fill(null) };
+  const yr = useMemo(() => annoConFatture(patrimonio[year], fatture, year), [patrimonio, fatture, year]);
+  const groups = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto", FATTURE_GROUP];
   const netWorthSeries = useMemo(() => getStrictNetWorthSeries(yr, fxRates, year, prices, fxHistory), [yr, fxRates, year, prices, fxHistory]);
   const currentMonthIdx = useMemo(() => getCurrentMonthIndex(netWorthSeries), [netWorthSeries]);
   const now = new Date();
@@ -1157,7 +1230,8 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
                 {items.map(a => {
                   const isAmort = a.ammortamento?.enabled;
                   const isPriceLinked = a.units !== undefined && a.units !== null;
-                  const isComputed = isAmort || isPriceLinked;
+                  const isFatture = a.fatture === true;
+                  const isComputed = isAmort || isPriceLinked || isFatture;
                   return (
                     <tr key={a.idx}>
                       <td>{a.name}{isAmort && <span className="badge-amort" style={{ marginLeft: 6 }}><Percent size={10} />amm.</span>}</td>
@@ -1190,12 +1264,14 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
                         return (
                           <td key={i} className="mono" onClick={() => !isComputed && setEditing({ assetIdx: a.idx, monthIdx: i })}
                             style={{ textAlign: "right", cursor: isComputed ? "default" : "pointer", color: val === null ? "#3A4152" : explicit || isComputed ? "#E7EBF3" : "#7C8797", ...colStyle(i) }}
-                            title={isAmort ? "Calcolato automaticamente dall'ammortamento" : explicit ? "Valore registrato" : "Non ancora compilato — clicca per inserirlo"}>
+                            title={isAmort ? "Calcolato automaticamente dall'ammortamento" : isFatture ? "Parte delle fatture pagate non ancora consumata — si aggiorna da sé" : explicit ? "Valore registrato" : "Non ancora compilato — clicca per inserirlo"}>
                             {val === null ? "·" : fmtCHF(val)}
                           </td>
                         );
                       })}
-                      <td><button className="icon-btn" onClick={() => deleteAsset(year, a.idx)}><Trash2 size={13} /></button></td>
+                      {/* La riga delle fatture non è un asset salvato: si toglie
+                          cancellando la fattura da Strumenti, non da qui. */}
+                      <td>{!isFatture && <button className="icon-btn" onClick={() => deleteAsset(year, a.idx)}><Trash2 size={13} /></button>}</td>
                     </tr>
                   );
                 })}
@@ -1232,7 +1308,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
       </>)}
 
       {showUpdateMonth && (
-        <UpdateMonthModal yr={yr} year={year} monthIdx={defaultMonthIdx} onClose={() => setShowUpdateMonth(false)}
+        <UpdateMonthModal yr={yrReale} year={year} monthIdx={defaultMonthIdx} onClose={() => setShowUpdateMonth(false)}
           onSave={(valuesByIdx) => { bulkUpdateMonth(year, defaultMonthIdx, valuesByIdx); setShowUpdateMonth(false); }} />
       )}
     </div>
@@ -1272,7 +1348,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
             {items.map(a => {
               const isAmort = a.ammortamento?.enabled;
               const isPriceLinked = a.units !== undefined && a.units !== null;
-              const isComputed = isAmort || isPriceLinked;
+              const isComputed = isAmort || isPriceLinked || a.fatture === true;
               const refDate = new Date(year, monthIdx, 1);
               const { value: val } = getAssetStrictValue(a, monthIdx, refDate, prices, year);
               const isEditing = editing === a.idx;
@@ -1772,17 +1848,17 @@ function MovementFormModal({ patrimonio, prices, onClose, onSave }) {
 }
 
 /* ============ STRUMENTI (Ammortamento + Split the bill + Movimenti) ============ */
-function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses, movements, addMovement, deleteMovement, prices }) {
+function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses, movements, addMovement, deleteMovement, prices, fatture, addFattura, deleteFattura, year }) {
   const [sub, setSub] = useState("ammortamento");
   return (
     <div>
       <div className="tabs-row">
         <button className={"btn" + (sub === "ammortamento" ? " primary" : "")} onClick={() => setSub("ammortamento")}><Percent size={14} />Ammortamento</button>
-        <button className={"btn" + (sub === "split" ? " primary" : "")} onClick={() => setSub("split")}><SplitSquareHorizontal size={14} />Split the bill</button>
+        <button className={"btn" + (sub === "fatture" ? " primary" : "")} onClick={() => setSub("fatture")}><SplitSquareHorizontal size={14} />Fatture</button>
         <button className={"btn" + (sub === "movimenti" ? " primary" : "")} onClick={() => setSub("movimenti")}><ArrowLeftRight size={14} />Movimenti</button>
       </div>
       {sub === "ammortamento" && <AmmortamentoTool patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} />}
-      {sub === "split" && <SplitBillTool categories={categories} addExpenses={addExpenses} />}
+      {sub === "fatture" && <FattureTool categories={categories} addExpenses={addExpenses} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
       {sub === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
     </div>
   );
@@ -1876,43 +1952,173 @@ function AmmortamentoFormModal({ onClose, onSave }) {
   );
 }
 
-function SplitBillTool({ categories, addExpenses }) {
+/* ============ FATTURE ============
+   Una fattura pagata in una volta ma di competenza di più mesi ha due facce, e qui
+   si inserisce una volta sola per averle entrambe:
+   - nelle Spese, le rate mensili (il costo che compete a ogni mese);
+   - nel Patrimonio, la parte non ancora consumata, alla voce "Fatture già pagate".
+   Se invece il cash esce davvero mese per mese non c'è nessun residuo: in quel caso
+   si tolgono i due spunti e lo strumento genera soltanto le rate, come prima. */
+function FattureTool({ categories, addExpenses, fatture, addFattura, deleteFattura, year }) {
+  const [showForm, setShowForm] = useState(!(fatture?.length));
+  const oggi = new Date();
+
+  const residui = useMemo(() => residuiAnno(fatture, year), [fatture, year]);
+  const righe = useMemo(() => (fatture || [])
+    .map(f => ({
+      ...f,
+      quota: Math.round((f.amount / f.months) * 100) / 100,
+      residuo: residuoFattura(f, oggi.getFullYear(), oggi.getMonth()),
+      periodo: meseLabel(parseMonth(f.startMonth)) + " → " + meseLabel(parseMonth(f.startMonth) + f.months - 1),
+    }))
+    .sort((a, b) => b.residuo - a.residuo || b.paidDate.localeCompare(a.paidDate)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [fatture]);
+  const residuoOggi = righe.reduce((s, r) => s + r.residuo, 0);
+  const aperte = righe.filter(r => r.residuo > 0).length;
+
+  if (showForm) {
+    return (
+      <NuovaFatturaForm
+        categories={categories}
+        onClose={() => setShowForm(false)}
+        onSave={({ rate, fattura }) => {
+          if (rate?.length) addExpenses(rate);
+          if (fattura) addFattura(fattura);
+          setShowForm(false);
+        }}
+      />
+    );
+  }
+
+  return (
+    <div>
+      <div className="page-toolbar">
+        <button className="btn primary" onClick={() => setShowForm(true)}><Plus size={15} />Nuova fattura</button>
+        <span style={{ fontSize: 12.5, color: "#7C8797" }}>
+          {aperte} in corso · <strong style={{ color: "var(--text-primary)" }}>{fmtCHF(residuoOggi)}</strong> non ancora consumati
+        </span>
+      </div>
+
+      <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
+        <div className="card-title">Fatture già pagate (CHF) — {year}</div>
+        <table className="data-table">
+          <thead><tr>{MONTHS.map(m => <th key={m} style={{ textAlign: "right" }}>{m}</th>)}</tr></thead>
+          <tbody><tr>{residui.map((v, i) => (
+            <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, color: v > 0 ? "#E7EBF3" : "#3A4152" }}>
+              {v > 0 ? fmtCHF(v) : "·"}
+            </td>
+          ))}</tr></tbody>
+        </table>
+      </div>
+
+      <div className="card" style={{ overflowX: "auto" }}>
+        <div className="card-title">Fatture</div>
+        {righe.length === 0 ? <div className="empty-state">Nessuna fattura registrata.</div> : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Descrizione</th><th>Pagata il</th><th>Competenza</th>
+                <th style={{ textAlign: "right" }}>Al mese</th><th style={{ textAlign: "right" }}>Residuo</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {righe.map(r => (
+                <tr key={r.id} style={r.residuo > 0 ? undefined : { opacity: 0.5 }}>
+                  <td>{r.desc}</td>
+                  <td className="mono" style={{ color: "#7C8797", whiteSpace: "nowrap" }}>{r.paidDate}</td>
+                  <td style={{ whiteSpace: "nowrap" }}>{r.periodo}</td>
+                  <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>{fmtCHF2(r.quota)}</td>
+                  <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{r.residuo > 0 ? fmtCHF(r.residuo) : "conclusa"}</td>
+                  <td style={{ width: 30 }}>
+                    <button className="icon-btn" onClick={() => deleteFattura(r.id)} title="Togli dal patrimonio (le spese già inserite restano)"><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* Riga con spunta: l'etichetta intera è cliccabile, comoda anche col dito. */
+function CheckRow({ checked, onChange, label, hint }) {
+  return (
+    <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginBottom: 13 }}>
+      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)}
+        style={{ width: 17, height: 17, minWidth: 17, margin: "1px 0 0", padding: 0, accentColor: COLORS.mint }} />
+      <span style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+        {label}
+        {hint && <span style={{ display: "block", color: "#7C8797", fontSize: 11.5, marginTop: 2 }}>{hint}</span>}
+      </span>
+    </label>
+  );
+}
+
+function NuovaFatturaForm({ categories, onClose, onSave }) {
   const primaries = Object.keys(categories);
   const [desc, setDesc] = useState("");
   const [total, setTotal] = useState("");
   const [months, setMonths] = useState(12);
   const [startMonth, setStartMonth] = useState(new Date().toISOString().slice(0, 7));
+  const [unaVolta, setUnaVolta] = useState(true);
+  const [paidDate, setPaidDate] = useState(new Date().toISOString().slice(0, 10));
+  const [rateGiaInserite, setRateGiaInserite] = useState(false);
   const [primary, setPrimary] = useState(primaries[0] || "");
   const [secondary, setSecondary] = useState((categories[primaries[0]] || [])[0] || "");
   const [preview, setPreview] = useState(null);
 
   const secondaries = categories[primary] || [];
-  const perRata = total && months ? Math.round((parseFloat(total) / months) * 100) / 100 : 0;
+  const perRata = total && months > 0 ? Math.round((parseFloat(total) / months) * 100) / 100 : 0;
 
-  const generate = () => {
+  // Residuo mese per mese di questa sola fattura, dal primo mese coinvolto
+  // (pagamento o competenza, il più antico) fino a copertura esaurita.
+  const anteprimaResiduo = (f) => {
+    const inizio = Math.min(parseMonth(f.paidDate.slice(0, 7)), parseMonth(f.startMonth));
+    const fine = parseMonth(f.startMonth) + f.months - 1;
+    const out = [];
+    for (let k = inizio; k <= fine; k++) {
+      out.push({ label: meseLabel(k), value: residuoFattura(f, Math.floor(k / 12), ((k % 12) + 12) % 12) });
+    }
+    return out;
+  };
+
+  const genera = () => {
+    const importo = parseFloat(total);
+    if (!desc || !importo || !(months > 0)) return;
     const [sy, sm] = startMonth.split("-").map(Number);
-    const rows = [];
-    for (let i = 0; i < months; i++) {
+    const rate = rateGiaInserite ? [] : Array.from({ length: months }, (_, i) => {
       const d = new Date(sy, sm - 1 + i, 1);
       const dateStr = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-01";
-      rows.push({ date: dateStr, desc: `${desc} (rata ${i + 1}/${months})`, amount: perRata, primary, secondary, note: "split the bill" });
-    }
-    return rows;
+      return { date: dateStr, desc: `${desc} (rata ${i + 1}/${months})`, amount: perRata, primary, secondary, note: "split the bill" };
+    });
+    const fattura = unaVolta ? { desc, amount: importo, paidDate, startMonth, months } : null;
+    setPreview({ rate, fattura, residuo: fattura ? anteprimaResiduo(fattura) : [] });
   };
 
   return (
     <div className="grid-2col">
       <div className="card">
-        <div className="card-title">Suddividi una spesa su più mesi</div>
-        <p style={{ fontSize: 12.5, color: "#7C8797", marginTop: -6, marginBottom: 16 }}>
-          Es. l'assicurazione dello scooter: inserisci l'importo annuale e viene ripartito automaticamente su 12 rate mensili.
-        </p>
-        <div className="field"><label className="field-label">Descrizione</label><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="es. RC scooter Baloise" /></div>
-        <div className="row-2">
-          <div className="field"><label className="field-label">Importo totale (CHF)</label><input type="number" value={total} onChange={(e) => setTotal(e.target.value)} /></div>
-          <div className="field"><label className="field-label">Numero di rate (mesi)</label><input type="number" min="2" max="24" value={months} onChange={(e) => setMonths(parseInt(e.target.value || "1", 10))} /></div>
+        <div className="card-title">
+          Nuova fattura
+          <button className="icon-btn" onClick={onClose} title="Torna all'elenco"><X size={18} /></button>
         </div>
-        <div className="field"><label className="field-label">Mese di partenza</label><input type="month" value={startMonth} onChange={(e) => setStartMonth(e.target.value)} /></div>
+        <div className="field"><label className="field-label">Descrizione</label><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="es. Abbonamento palestra" /></div>
+        <div className="row-2">
+          <div className="field"><label className="field-label">Importo totale (CHF)</label><input type="number" step="0.01" value={total} onChange={(e) => setTotal(e.target.value)} placeholder="600" /></div>
+          <div className="field"><label className="field-label">Su quanti mesi</label><input type="number" min="2" max="60" value={months} onChange={(e) => setMonths(parseInt(e.target.value || "1", 10))} /></div>
+        </div>
+        <div className="field"><label className="field-label">Primo mese di competenza</label><input type="month" value={startMonth} onChange={(e) => setStartMonth(e.target.value)} /></div>
+
+        <CheckRow checked={unaVolta} onChange={setUnaVolta}
+          label="Pagata tutta in una volta"
+          hint="I mesi non ancora consumati restano nel patrimonio come «Fatture già pagate»." />
+        {unaVolta && (
+          <div className="field"><label className="field-label">Uscita dal conto il</label><input type="date" value={paidDate} onChange={(e) => setPaidDate(e.target.value)} /></div>
+        )}
+
         <div className="row-2">
           <div className="field">
             <label className="field-label">Categoria</label>
@@ -1927,29 +2133,53 @@ function SplitBillTool({ categories, addExpenses }) {
             </select>
           </div>
         </div>
-        {total && months > 0 && (
-          <div className="pill" style={{ marginBottom: 14 }}>≈ {fmtCHF2(perRata)} CHF / mese</div>
-        )}
-        <button className="btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={() => setPreview(generate())}>
-          <Sparkles size={14} />Genera anteprima rate
+
+        <CheckRow checked={rateGiaInserite} onChange={setRateGiaInserite}
+          label="Le rate sono già nelle spese"
+          hint="Per una fattura vecchia già divisa a mano: registra solo la parte di patrimonio." />
+
+        {perRata > 0 && <div className="pill" style={{ marginBottom: 14 }}>{fmtCHF2(perRata)} CHF / mese</div>}
+        <button className="btn primary" style={{ width: "100%", justifyContent: "center" }} onClick={genera}>
+          <Sparkles size={14} />Genera anteprima
         </button>
       </div>
 
       <div className="card">
-        <div className="card-title">Anteprima rate</div>
+        <div className="card-title">Anteprima</div>
         {!preview ? <div className="empty-state">Compila il modulo e genera l'anteprima.</div> : (
           <>
-            <table className="data-table">
-              <thead><tr><th>Data</th><th>Descrizione</th><th style={{ textAlign: "right" }}>Importo</th></tr></thead>
-              <tbody>
-                {preview.map((r, i) => (
-                  <tr key={i}><td className="mono" style={{ color: "#7C8797" }}>{r.date}</td><td>{r.desc}</td><td className="mono" style={{ textAlign: "right" }}>{fmtCHF2(r.amount)}</td></tr>
-                ))}
-              </tbody>
-            </table>
-            <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 14 }}
-              onClick={() => { addExpenses(preview); setPreview(null); setDesc(""); setTotal(""); }}>
-              Conferma e aggiungi {preview.length} spese
+            {preview.residuo.length > 0 && (
+              <div style={{ marginBottom: 18, overflowX: "auto" }}>
+                <div style={{ fontSize: 11.5, color: "#7C8797", marginBottom: 8 }}>Nel patrimonio, a fine mese</div>
+                <table className="data-table">
+                  <thead><tr>{preview.residuo.map(r => <th key={r.label} style={{ textAlign: "right" }}>{r.label}</th>)}</tr></thead>
+                  <tbody><tr>{preview.residuo.map(r => (
+                    <td key={r.label} className="mono" style={{ textAlign: "right", color: r.value > 0 ? "#E7EBF3" : "#3A4152" }}>
+                      {r.value > 0 ? fmtCHF(r.value) : "·"}
+                    </td>
+                  ))}</tr></tbody>
+                </table>
+              </div>
+            )}
+            {preview.rate.length > 0 && (
+              <div style={{ overflowX: "auto" }}>
+                <div style={{ fontSize: 11.5, color: "#7C8797", marginBottom: 8 }}>Nelle spese</div>
+                <table className="data-table">
+                  <thead><tr><th>Data</th><th>Descrizione</th><th style={{ textAlign: "right" }}>Importo</th></tr></thead>
+                  <tbody>
+                    {preview.rate.map((r, i) => (
+                      <tr key={i}><td className="mono" style={{ color: "#7C8797", whiteSpace: "nowrap" }}>{r.date}</td><td>{r.desc}</td><td className="mono" style={{ textAlign: "right" }}>{fmtCHF2(r.amount)}</td></tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 16 }}
+              onClick={() => onSave(preview)}>
+              <Check size={14} />
+              {preview.rate.length > 0 && preview.fattura ? `Conferma: ${preview.rate.length} spese + patrimonio`
+                : preview.rate.length > 0 ? `Conferma e aggiungi ${preview.rate.length} spese`
+                : "Conferma"}
             </button>
           </>
         )}
@@ -2061,8 +2291,9 @@ function speseAOA(expenses) {
 }
 // Foglio "Patrimonio {anno}": valore in CHF di ogni voce, mese per mese, + patrimonio netto.
 function patrimonioAOA(year, data) {
-  const yr = data.patrimonio[year];
-  if (!yr || !yr.assets?.length) return null;
+  if (!data.patrimonio[year]?.assets?.length) return null;
+  // Come nella scheda Patrimonio: in fondo la riga delle fatture già pagate.
+  const yr = annoConFatture(data.patrimonio[year], data.fatture, year);
   const fx = data.fxRates;
   const chf = (a, i) => {
     const { value } = getAssetStrictValue(a, i, new Date(year, i, 1), data.prices, year);

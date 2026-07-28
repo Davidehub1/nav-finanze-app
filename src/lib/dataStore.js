@@ -110,6 +110,7 @@ function rowsToAppData({ profile, expenses, assets, prices, movements }) {
     tickers: profile.tickers || {},
     fxHistory: profile.fx_history || {},
     budgets: profile.budgets || {},
+    fatture: profile.fatture || [],
   };
 }
 
@@ -255,6 +256,7 @@ export async function persistUserData(userId, data) {
     tickers: data.tickers || {},
     fx_history: data.fxHistory || {},
     budgets: data.budgets || {},
+    fatture: data.fatture || [],
     updated_at: new Date().toISOString(),
   });
   if (profileErr) throw profileErr;

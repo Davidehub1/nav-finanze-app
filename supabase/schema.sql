@@ -21,6 +21,10 @@ create table profiles (
   fx_history jsonb not null default '{}'::jsonb,
   -- budget mensile facoltativo per categoria: {"Cibo superficiale": 200}
   budgets jsonb not null default '{}'::jsonb,
+  -- fatture pagate in una volta ma di competenza di più mesi (risconti attivi):
+  -- [{ id, desc, amount, paidDate: "2026-05-20", startMonth: "2026-05", months: 12 }]
+  -- La parte non ancora consumata compare nel patrimonio come "Fatture già pagate".
+  fatture jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 
