@@ -27,6 +27,11 @@ export function GlobalStyle() {
         display: flex;
       }
       .nav-root * { box-sizing: border-box; }
+      /* Niente selezione del testo: l'app si usa col dito, e una pressione lunga
+         deve avviare il riordino, non la lente d'ingrandimento con "Copia".
+         I campi di scrittura restano ovviamente selezionabili. */
+      .nav-root { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+      .nav-root input, .nav-root textarea { -webkit-user-select: text; user-select: text; }
       .mono { font-family: 'IBM Plex Mono', monospace; font-variant-numeric: tabular-nums; }
       .nav-sidebar {
         width: 220px; flex-shrink: 0; background: var(--bg-panel);
