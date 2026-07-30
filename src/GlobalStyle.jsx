@@ -85,6 +85,19 @@ export function GlobalStyle() {
       .icon-btn:hover { color: var(--text-primary); background: var(--bg-raised); }
       .icon-btn.danger:hover { color: var(--coral); background: rgba(255,107,107,0.10); }
       .badge-amort { display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-micro); color: var(--amber); background: rgba(245,184,65,0.12); border:1px solid rgba(245,184,65,0.35); padding:2px 7px; border-radius:100px; font-weight:600; }
+      /* Modo riordino: le schede ripiegate in barrette che si spostano col dito.
+         touch-action:none serve perché la pagina non scorra mentre trascini. */
+      .riordino-barra {
+        display:flex; align-items:center; gap:10px; height:46px; padding:0 14px; margin-bottom:8px;
+        background:var(--bg-panel); border:1px solid var(--border-hair); border-radius:10px;
+        font-size:var(--fs-base); font-weight:600; color:var(--text-primary);
+        touch-action:none; user-select:none; cursor:grab;
+      }
+      .riordino-barra.attiva { border-color:var(--mint); background:var(--bg-raised); box-shadow:0 8px 20px rgba(0,0,0,0.45); cursor:grabbing; }
+      .riordino-barra:not(.attiva) { animation: tremolio .28s ease-in-out infinite alternate; }
+      @keyframes tremolio { from { transform: rotate(-0.5deg); } to { transform: rotate(0.5deg); } }
+      @media (prefers-reduced-motion: reduce) { .riordino-barra:not(.attiva) { animation:none; } }
+
       .page-header { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
 
       /* Intestazione: titolo a sinistra, stato e azioni (icone tenui) a destra */

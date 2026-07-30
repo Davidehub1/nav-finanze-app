@@ -59,7 +59,7 @@ reale di Davide — **i dati sono veri, non di prova**.
 - **Se il caricamento iniziale fallisce, il salvataggio resta bloccato** e si mostra
   la schermata "Dati non caricati": salvare uno stato vuoto sovrascriverebbe tutto.
 - Le colonne aggiunte a `profiles` nel tempo: `net_worth_fallback`, `display_name`,
-  `tickers`, `fx_history`, `budgets`, `fatture`. Aggiungerne altre richiede un
+  `tickers`, `fx_history`, `budgets`, `fatture`, `layout`. Aggiungerne altre richiede un
   `alter table` che deve eseguire Davide (io non ho accesso alla sua console
   Supabase) **prima** di pubblicare: il salvataggio scrive tutte le colonne
   insieme, quindi una colonna mancante blocca ogni salvataggio.
@@ -94,6 +94,23 @@ entri dentro qualcosa che c'è già, altrimenti la Dashboard diventa un cruscott
 | Mesi di autonomia | intestazione del gruppo "Cash/liquidità" |
 | Confronto con lo stesso mese dell'anno prima | riga "Totale spese" della ripartizione (solo sul totale, non per categoria) |
 | Riepilogo del mese chiuso | in cima alla Dashboard, una volta al mese; il "già letto" sta in `localStorage`, non nei dati |
+
+### Riordino delle schede
+
+Tenendo premuto una scheda (Dashboard o gruppi del Patrimonio) si entra in "modo
+riordino": le schede si **ripiegano in barrette** da 46px che si trascinano col
+dito. Ripiegarle è la scelta chiave — su telefono la ripartizione è alta 600px e
+trascinarla intera vorrebbe dire combattere con lo scorrimento della pagina.
+
+- L'ordine sta in `profiles.layout` (`{ dashboard: [...], patrimonio: [...] }`) e
+  passa da `setLayout`, che **non registra nulla nella cronologia**: "Annulla"
+  deve restare per i dati veri.
+- Si salva al rilascio, non a ogni pixel.
+- `SezioniRiordinabili` legge gli id dalle `key` dei figli, quindi per rendere
+  riordinabile un blocco basta avvolgerlo e dargli una `key`.
+- Durante il trascinamento l'ordine di lavoro vive in un `useRef`, non nello stato:
+  fra un movimento e il disegno successivo ne arrivano altri, e leggere uno stato
+  non ancora aggiornato faceva saltare gli spostamenti.
 
 Il rendimento misura **solo il movimento dei prezzi** sulle quote attuali: i
 versamenti fatti durante l'anno non vanno mescolati, altrimenti sembrerebbe

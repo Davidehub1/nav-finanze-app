@@ -7,7 +7,7 @@ import {
   LayoutDashboard, Receipt, Wallet, Wrench, Tags, Plus, Trash2, X,
   TrendingUp, TrendingDown, ChevronDown, Search, Percent, SplitSquareHorizontal,
   Sparkles, ArrowUpRight, ArrowDownRight, ArrowLeftRight, Pencil, Check, RefreshCw, Undo2, Save, LogOut, User,
-  ChevronLeft, ChevronRight, Download
+  ChevronLeft, ChevronRight, Download, GripVertical
 } from "lucide-react";
 
 import { PATRIMONIO_SEED, FX_DEFAULT } from "./lib/seedData.js";
@@ -96,6 +96,7 @@ function computeAmmortamentoValue(cfg, refDate = new Date()) {
    Il residuo si ricalcola sempre da qui: non viene mai salvato fra gli asset. */
 const FATTURE_ASSET = "Fatture già pagate";
 const FATTURE_GROUP = "Altre attività";
+const GRUPPI_BASE = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto", FATTURE_GROUP];
 
 const absMonth = (year, monthIdx) => year * 12 + monthIdx;
 const parseMonth = (s) => { const [y, m] = s.split("-").map(Number); return absMonth(y, m - 1); };
@@ -475,7 +476,7 @@ function applyTrackedPrices(data, results) {
 }
 
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {}, fatture: [] };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {}, fatture: [], layout: {} };
 const MAX_HISTORY = 30;
 
 function FinanceApp({ user }) {
@@ -520,7 +521,7 @@ function FinanceApp({ user }) {
       setSaveStatus("saving");
       persistUserData(user.id, data)
         .then(() => setSaveStatus("saved"))
-        .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e); setSaveStatus("error"); });
+        .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e?.message || e, e); setSaveStatus("error"); });
     }, 800);
     return () => clearTimeout(t);
   }, [data, loaded, loadError, user.id]);
@@ -530,7 +531,7 @@ function FinanceApp({ user }) {
     setSaveStatus("saving");
     persistUserData(user.id, data)
       .then(() => setSaveStatus("saved"))
-      .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e); setSaveStatus("error"); });
+      .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e?.message || e, e); setSaveStatus("error"); });
   }, [data, loaded, loadError, user.id]);
 
   // Applica una modifica ai dati registrando lo stato precedente per l'undo
@@ -550,6 +551,12 @@ function FinanceApp({ user }) {
   }, []);
 
   const { expenses, patrimonio, categories, movements, fxRates, prices, displayName, fxHistory, fatture } = data;
+
+  // L'ordine delle schede non passa dalla cronologia: "Annulla" deve restare per i
+  // dati veri, non per un riquadro spostato di due posizioni.
+  const setLayout = useCallback((patch) => {
+    setData(prev => ({ ...prev, layout: { ...(prev.layout || {}), ...patch } }));
+  }, []);
 
   const addFattura = useCallback((f) => {
     applyChange(prev => ({ ...prev, fatture: [...(prev.fatture || []), { ...f, id: uid() }] }));
@@ -699,8 +706,8 @@ function FinanceApp({ user }) {
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
         <AppHeader title={TAB_TITLES[tab]} past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
-        {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} fatture={fatture} />}
-        {tab === "patrimonio" && <Patrimonio expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
+        {tab === "dashboard" && <Dashboard layout={data.layout} setLayout={setLayout} expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} fatture={fatture} />}
+        {tab === "patrimonio" && <Patrimonio layout={data.layout} setLayout={setLayout} expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
         {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
@@ -736,6 +743,134 @@ function AppHeader({ title, past, undo, saveStatus, saveNow, onLogout }) {
         )}
         <button className="icon-btn header-action" onClick={onLogout} title="Esci dall'account"><LogOut size={16} /></button>
       </div>
+    </div>
+  );
+}
+
+/* ============ RIORDINO DELLE SCHEDE ============
+   Tieni premuto una scheda: tutto entra in "modo riordino" e le schede si ripiegano
+   in barrette col loro nome, che si spostano col dito. Ripiegarle non è un vezzo —
+   sul telefono la ripartizione delle spese è alta 600px su uno schermo da 812, e
+   trascinarla intera significherebbe combattere con lo scorrimento della pagina.
+   Si riaprono nel nuovo ordine premendo "Fine". */
+
+// L'ordine salvato può riferirsi a schede che non esistono più (o non conoscere
+// quelle nuove): tiene quelle valide e accoda le altre in fondo, senza mai perderne.
+function ordinaSezioni(salvato, disponibili) {
+  const noti = (salvato || []).filter((id) => disponibili.includes(id));
+  return [...noti, ...disponibili.filter((id) => !noti.includes(id))];
+}
+
+const idSezione = (figlio) => String(figlio.key).replace(/^\.\$/, "");
+const PRESSIONE_MS = 500;
+
+function SezioniRiordinabili({ children, titoli, ordine, onOrdine }) {
+  const [riordino, setRiordino] = useState(false);
+  const timer = useRef(null);
+  const partenza = useRef({ x: 0, y: 0 });
+
+  const figli = React.Children.toArray(children).filter(Boolean);
+  const ids = figli.map(idSezione);
+  const ord = ordinaSezioni(ordine, ids);
+  const perId = Object.fromEntries(figli.map((f) => [idSezione(f), f]));
+
+  const annulla = () => { clearTimeout(timer.current); timer.current = null; };
+  const premi = (e) => {
+    // Un tocco che parte da un comando è un comando, non l'inizio di un riordino.
+    if (riordino || e.target.closest("button, input, select, textarea, a, td, th")) return;
+    partenza.current = { x: e.clientX, y: e.clientY };
+    annulla();
+    timer.current = setTimeout(() => {
+      setRiordino(true);
+      if (navigator.vibrate) navigator.vibrate(12);
+    }, PRESSIONE_MS);
+  };
+  const muovi = (e) => {
+    if (!timer.current) return;
+    if (Math.abs(e.clientX - partenza.current.x) > 10 || Math.abs(e.clientY - partenza.current.y) > 10) annulla();
+  };
+
+  if (riordino) {
+    return <BarreRiordino voci={ord} titoli={titoli} onOrdine={onOrdine} onFine={() => setRiordino(false)} />;
+  }
+
+  return (
+    <>
+      {ord.map((id) => perId[id] && (
+        <div key={id} onPointerDown={premi} onPointerMove={muovi} onPointerUp={annulla}
+          onPointerCancel={annulla} onPointerLeave={annulla}>
+          {perId[id]}
+        </div>
+      ))}
+    </>
+  );
+}
+
+const ALTEZZA_BARRA = 54; // 46px di barra + 8px di distacco
+
+function BarreRiordino({ voci, titoli, onOrdine, onFine }) {
+  const [ordine, setOrdine] = useState(voci);
+  const [scostamento, setScostamento] = useState(null); // { id, dy }
+  const presa = useRef(null);
+
+  const giu = (e, idx) => {
+    // La cattura del puntatore fa sì che il dito continui a comandare la barra
+    // anche uscendo dai suoi bordi. Non è indispensabile: se non è disponibile
+    // si trascina lo stesso, quindi non deve interrompere il gesto.
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* nessuna cattura */ }
+    // L'ordine di lavoro sta nel riferimento, non nello stato: fra un movimento e
+    // il disegno successivo possono arrivare altri movimenti, e leggere uno stato
+    // non ancora aggiornato farebbe saltare gli spostamenti.
+    presa.current = { y: e.clientY, da: idx, id: ordine[idx], lista: [...ordine] };
+    setScostamento({ id: ordine[idx], dy: 0 });
+  };
+
+  const muovi = (e) => {
+    if (!presa.current) return;
+    const { lista, da } = presa.current;
+    const dy = e.clientY - presa.current.y;
+    const a = Math.max(0, Math.min(lista.length - 1, da + Math.round(dy / ALTEZZA_BARRA)));
+    if (a !== da) {
+      const next = [...lista];
+      next.splice(a, 0, next.splice(da, 1)[0]);
+      presa.current.lista = next;
+      presa.current.y += (a - da) * ALTEZZA_BARRA;
+      presa.current.da = a;
+      setOrdine(next);
+      setScostamento({ id: presa.current.id, dy: e.clientY - presa.current.y });
+    } else {
+      setScostamento({ id: presa.current.id, dy });
+    }
+  };
+
+  // L'ordine si salva al rilascio, non a ogni pixel: altrimenti un solo
+  // trascinamento riempirebbe la cronologia e farebbe partire decine di salvataggi.
+  const su = () => {
+    if (!presa.current) return;
+    const finale = presa.current.lista;
+    presa.current = null;
+    setScostamento(null);
+    onOrdine(finale);
+  };
+
+  return (
+    <div>
+      <div className="page-toolbar">
+        <button className="btn primary" onClick={() => { onOrdine(ordine); onFine(); }}>
+          <Check size={15} />Fine
+        </button>
+      </div>
+      {ordine.map((id, i) => {
+        const attiva = scostamento?.id === id;
+        return (
+          <div key={id} className={"riordino-barra" + (attiva ? " attiva" : "")}
+            style={attiva ? { transform: `translateY(${scostamento.dy}px)`, position: "relative", zIndex: 2 } : { animationDelay: (i % 3) * 0.07 + "s" }}
+            onPointerDown={(e) => giu(e, i)} onPointerMove={muovi} onPointerUp={su} onPointerCancel={su}>
+            <GripVertical size={16} style={{ color: "#4E576A", flexShrink: 0 }} />
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titoli[id] || id}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -809,7 +944,14 @@ function useExpenseStats(expenses, year) {
 }
 
 /* ============ DASHBOARD ============ */
-function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets, fatture }) {
+// Nomi delle schede quando si ripiegano in barrette per il riordino.
+const TITOLI_DASHBOARD = {
+  riquadri: "Riquadri in alto",
+  ripartizione: "Ripartizione spese",
+  composizione: "Composizione del patrimonio",
+  grafici: "Grafici dell'anno",
+};
+function Dashboard({ layout, setLayout, expenses, patrimonio, year, setYear, fxRates, prices, categories, fxHistory, budgets, fatture }) {
   const stats = useExpenseStats(expenses, year);
 
   // Colore fisso per ogni categoria: dipende dalla sua posizione nella lista
@@ -955,7 +1097,9 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
         <YearSelect year={year} setYear={setYear} />
       </div>
 
-      <div className="ticker">
+      <SezioniRiordinabili titoli={TITOLI_DASHBOARD} ordine={layout?.dashboard} onOrdine={(o) => setLayout({ dashboard: o })}>
+
+      <div key="riquadri" className="ticker">
         <div className="ticker-cell">
           <div className="ticker-label">Patrimonio netto ({MONTHS[selMonth]})</div>
           <div className="ticker-value mono">{fmtCHF(nwNow)}</div>
@@ -983,7 +1127,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
         </div>
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
+      <div key="ripartizione" className="card" style={{ marginBottom: 16 }}>
         <div className="card-title" style={{ alignItems: "center" }}>
           <span>Ripartizione spese — {MONTHS[selMonth]} {year}</span>
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -1067,7 +1211,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
 
       {/* Il bordo superiore dell'area è il patrimonio netto; le bande dicono da
           cosa è composto. Di default tutta la storia, senza il muro del capodanno. */}
-      <div className="card" style={{ marginBottom: 16 }}>
+      <div key="composizione" className="card" style={{ marginBottom: 16 }}>
         <div className="card-title">
           <span>Composizione del patrimonio {soloAnno ? year : "— dal " + (Object.keys(patrimonio).sort()[0] || year)}</span>
           <button className="btn" style={{ padding: "5px 11px" }} onClick={() => setSoloAnno(s => !s)}>
@@ -1091,7 +1235,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
         )}
       </div>
 
-      <div className="grid-2col-wide">
+      <div key="grafici" className="grid-2col-wide">
         <div className="card">
           <div className="card-title">Entrate vs spese mensili {year}</div>
           <ResponsiveContainer width="100%" height={240}>
@@ -1120,6 +1264,8 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
           )}
         </div>
       </div>
+
+      </SezioniRiordinabili>
     </div>
   );
 }
@@ -1319,7 +1465,7 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ expenses, patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory, fatture }) {
+function Patrimonio({ layout, setLayout, expenses, patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory, fatture }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
@@ -1330,7 +1476,7 @@ function Patrimonio({ expenses, patrimonio, year, setYear, updateAsset, deleteAs
   // delle fatture già pagate, aggiunta in fondo (le posizioni salvate non cambiano).
   const yrReale = patrimonio[year] || { assets: [], netWorth: Array(12).fill(null) };
   const yr = useMemo(() => annoConFatture(patrimonio[year], fatture, year), [patrimonio, fatture, year]);
-  const groups = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto", FATTURE_GROUP];
+  const groups = useMemo(() => ordinaSezioni(layout?.patrimonio, GRUPPI_BASE), [layout]);
   const netWorthSeries = useMemo(() => getStrictNetWorthSeries(yr, fxRates, year, prices, fxHistory), [yr, fxRates, year, prices, fxHistory]);
   const currentMonthIdx = useMemo(() => getCurrentMonthIndex(netWorthSeries), [netWorthSeries]);
   const now = new Date();
@@ -1413,11 +1559,13 @@ function Patrimonio({ expenses, patrimonio, year, setYear, updateAsset, deleteAs
           netWorthValue={netWorthSeries[meseCorrenteIdx]}
           onConfirm={confirmMonth} confirmStatus={confirmStatus}
           fxRates={fxRates} fxHistory={fxHistory} autonomia={autonomiaDi(meseCorrenteIdx)}
+          ordineGruppi={layout?.patrimonio} onOrdineGruppi={(o) => setLayout({ patrimonio: o })}
         />
       </>)}
 
       {showStorico && (<>
 
+      <SezioniRiordinabili titoli={{}} ordine={layout?.patrimonio} onOrdine={(o) => setLayout({ patrimonio: o })}>
       {groups.map(g => {
         const items = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === g);
         if (items.length === 0) return null;
@@ -1499,6 +1647,7 @@ function Patrimonio({ expenses, patrimonio, year, setYear, updateAsset, deleteAs
           </div>
         );
       })}
+      </SezioniRiordinabili>
 
       {(() => {
         const investAssets = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === "Investimenti");
@@ -1545,7 +1694,7 @@ function GroupTitle({ gruppo, autonomia }) {
 }
 
 /* ============ MESE CORRENTE (mobile): stessa composizione del Patrimonio, ma solo il mese selezionato, righe grandi e comode al tocco ============ */
-function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus, fxRates, fxHistory, autonomia }) {
+function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus, fxRates, fxHistory, autonomia, ordineGruppi, onOrdineGruppi }) {
   const [editing, setEditing] = useState(null); // assetIdx
   const [expandedIdx, setExpandedIdx] = useState(null); // assetIdx con dettaglio quote×prezzo aperto
   const investAssets = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === "Investimenti");
@@ -1568,6 +1717,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
         <div className="mono" style={{ fontSize: "var(--fs-hero)", fontWeight: 700 }}>{netWorthValue === null || netWorthValue === undefined ? "—" : fmtCHF(netWorthValue)}</div>
       </div>
 
+      <SezioniRiordinabili titoli={{}} ordine={ordineGruppi} onOrdine={onOrdineGruppi}>
       {groups.map(g => {
         const items = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === g);
         if (items.length === 0) return null;
@@ -1611,6 +1761,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
           </div>
         );
       })}
+      </SezioniRiordinabili>
 
       {investAssets.length > 0 && (
         <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>

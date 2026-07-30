@@ -25,6 +25,9 @@ create table profiles (
   -- [{ id, desc, amount, paidDate: "2026-05-20", startMonth: "2026-05", months: 12 }]
   -- La parte non ancora consumata compare nel patrimonio come "Fatture già pagate".
   fatture jsonb not null default '[]'::jsonb,
+  -- ordine delle schede scelto da Davide, per sezione:
+  -- {"dashboard": ["ripartizione","riquadri",...], "patrimonio": ["Cash/liquidità",...]}
+  layout jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 

@@ -111,6 +111,7 @@ function rowsToAppData({ profile, expenses, assets, prices, movements }) {
     fxHistory: profile.fx_history || {},
     budgets: profile.budgets || {},
     fatture: profile.fatture || [],
+    layout: profile.layout || {},
   };
 }
 
@@ -257,6 +258,7 @@ export async function persistUserData(userId, data) {
     fx_history: data.fxHistory || {},
     budgets: data.budgets || {},
     fatture: data.fatture || [],
+    layout: data.layout || {},
     updated_at: new Date().toISOString(),
   });
   if (profileErr) throw profileErr;
