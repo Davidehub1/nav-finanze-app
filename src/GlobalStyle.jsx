@@ -94,8 +94,8 @@ export function GlobalStyle() {
         touch-action:none; user-select:none; cursor:grab;
       }
       .riordino-barra.attiva { border-color:var(--mint); background:var(--bg-raised); box-shadow:0 8px 20px rgba(0,0,0,0.45); cursor:grabbing; }
-      .riordino-barra:not(.attiva) { animation: tremolio .42s ease-in-out infinite alternate; }
-      @keyframes tremolio { from { transform: rotate(-0.28deg); } to { transform: rotate(0.28deg); } }
+      .riordino-barra:not(.attiva) { animation: tremolio .28s ease-in-out infinite alternate; }
+      @keyframes tremolio { from { transform: rotate(-0.5deg); } to { transform: rotate(0.5deg); } }
       @media (prefers-reduced-motion: reduce) { .riordino-barra:not(.attiva) { animation:none; } }
 
       .page-header { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:12px; margin-bottom:4px; }
