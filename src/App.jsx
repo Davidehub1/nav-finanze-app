@@ -762,7 +762,9 @@ function ordinaSezioni(salvato, disponibili) {
 }
 
 const idSezione = (figlio) => String(figlio.key).replace(/^\.\$/, "");
-const PRESSIONE_MS = 500;
+// Mezzo secondo (come iOS) scattava troppo facilmente scorrendo la pagina: qui le
+// schede sono grandi e il dito ci si appoggia spesso senza volerle spostare.
+const PRESSIONE_MS = 800;
 
 function SezioniRiordinabili({ children, titoli, ordine, onOrdine }) {
   const [riordino, setRiordino] = useState(false);
