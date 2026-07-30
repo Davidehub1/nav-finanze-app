@@ -54,11 +54,27 @@ const fmtCHF = (n) => {
   const sign = n < 0 ? "-" : "";
   return sign + "CHF " + Math.abs(n).toLocaleString("it-CH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
 };
+// Come fmtCHF ma senza la valuta davanti: dentro una tabella l'unità si scrive una
+// volta sola nell'intestazione. Serve anche a non mentire — nelle griglie del
+// Patrimonio i valori sono nella valuta dell'asset (colonna Cur), non sempre in CHF.
+const fmtNum = (n) => {
+  if (n === null || n === undefined || isNaN(n)) return "—";
+  const sign = n < 0 ? "-" : "";
+  return sign + Math.abs(n).toLocaleString("it-CH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+};
 const fmtCHF2 = (n) => {
   if (n === null || n === undefined || isNaN(n)) return "—";
   return n.toLocaleString("it-CH", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 const uid = () => crypto.randomUUID();
+
+// Colore di una cifra nelle griglie del Patrimonio. Un saldo negativo (la carta di
+// credito) si deve leggere al volo, senza cercarlo. `pieno` distingue i valori
+// registrati in quel mese da quelli riportati dal mese precedente, che restano tenui.
+const cellColor = (val, pieno) =>
+  val === null || val === undefined ? "#3A4152"
+    : val < 0 ? (pieno ? COLORS.coral : "rgba(255,107,107,0.62)")
+      : pieno ? "#E7EBF3" : "#7C8797";
 
 /* ============ AMMORTAMENTO: calcolo valore corrente ============ */
 function computeAmmortamentoValue(cfg, refDate = new Date()) {
@@ -563,7 +579,7 @@ function FinanceApp({ user }) {
         <GlobalStyle />
         <div className="card" style={{ maxWidth: 380, textAlign: "center" }}>
           <div className="card-title" style={{ justifyContent: "center", color: COLORS.coral }}>Dati non caricati</div>
-          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
+          <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
             Non è stato possibile leggere i tuoi dati (probabilmente manca la connessione).
             I dati sul server sono al sicuro: il salvataggio resta sospeso finché non riesce la lettura.
           </p>
@@ -618,7 +634,7 @@ function AppHeader({ title, past, undo, saveStatus, saveNow, onLogout }) {
     <div className="app-header">
       <h1 className="nav-page-title" style={{ margin: 0 }}>{title}</h1>
       <div className="app-header-actions">
-        {stato && <span className="mono" style={{ fontSize: 11, color: stato.colore }}>{stato.testo}</span>}
+        {stato && <span className="mono" style={{ fontSize: "var(--fs-micro)", color: stato.colore }}>{stato.testo}</span>}
         {mostraSalva && (
           <button className="icon-btn header-action" onClick={saveNow} title="Salva adesso"><Save size={16} /></button>
         )}
@@ -822,7 +838,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
           <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
             <button className="icon-btn" onClick={() => setSelMonth(m => Math.max(0, m - 1))} disabled={selMonth === 0}
               style={selMonth === 0 ? { opacity: 0.3, cursor: "default" } : {}} title="Mese precedente"><ChevronLeft size={16} /></button>
-            <span className="mono" style={{ fontSize: 12, minWidth: 58, textAlign: "center", color: "var(--text-primary)" }}>{MONTHS[selMonth]} {year}</span>
+            <span className="mono" style={{ fontSize: "var(--fs-sm)", minWidth: 58, textAlign: "center", color: "var(--text-primary)" }}>{MONTHS[selMonth]} {year}</span>
             <button className="icon-btn" onClick={() => setSelMonth(m => Math.min(11, m + 1))} disabled={selMonth === 11}
               style={selMonth === 11 ? { opacity: 0.3, cursor: "default" } : {}} title="Mese successivo"><ChevronRight size={16} /></button>
           </span>
@@ -841,12 +857,12 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
                       <span style={{ width: 10, height: 10, borderRadius: 3, background: col, flexShrink: 0 }} />
                       {r.cat.trim()}
                     </span>
-                    <span className="mono" style={{ fontWeight: 700, fontSize: 15, whiteSpace: "nowrap" }}>{fmtCHF(r.amount)}</span>
+                    <span className="mono" style={{ fontWeight: 700, fontSize: "var(--fs-md)", whiteSpace: "nowrap" }}>{fmtCHF(r.amount)}</span>
                   </div>
                   <div style={{ height: 6, borderRadius: 4, background: "var(--bg-raised)", overflow: "hidden", marginBottom: 6 }}>
                     <div style={{ width: pct + "%", height: "100%", background: col }} />
                   </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: 11.5, color: "#7C8797", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", gap: 10, fontSize: "var(--fs-micro)", color: "#7C8797", flexWrap: "wrap" }}>
                     <span>
                       {Math.round(pct)}% del mese · {r.count} {r.count === 1 ? "spesa" : "spese"} · media {fmtCHF(r.avg)}
                       {/* Budget: compare solo se impostato per questa categoria. Tono neutro
@@ -876,13 +892,13 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
                     .filter(r => catConBudget.has(r.cat))
                     .reduce((s, r) => s + r.amount, 0);
                   return (
-                    <span style={{ fontWeight: 400, fontSize: 11.5, color: spesoConBudget > budgetTotale ? COLORS.amber : "#4E576A" }}>
+                    <span style={{ fontWeight: 400, fontSize: "var(--fs-micro)", color: spesoConBudget > budgetTotale ? COLORS.amber : "#4E576A" }}>
                       {" "}· budget {fmtCHF(spesoConBudget)}/{fmtCHF(budgetTotale)}
                     </span>
                   );
                 })()}
               </span>
-              <span className="mono" style={{ fontSize: 16 }}>{fmtCHF(monthBreakdown.total)}</span>
+              <span className="mono" style={{ fontSize: "var(--fs-lg)" }}>{fmtCHF(monthBreakdown.total)}</span>
             </div>
           </div>
         )}
@@ -902,7 +918,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
               <CartesianGrid stroke="#2A3140" vertical={false} />
               <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} />
               <YAxis stroke="#7C8797" fontSize={11} tickFormatter={(v) => (v / 1000) + "k"} />
-              <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF(v)} />
+              <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
               <Area type="monotone" dataKey="patrimonio" stroke={COLORS.mint} fill="url(#nwGrad)" strokeWidth={2} />
             </AreaChart>
           </ResponsiveContainer>
@@ -915,7 +931,7 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
                 <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
                   {pieData.map((d) => <Cell key={d.key} fill={colorFor(d.key)} />)}
                 </Pie>
-                <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF(v)} />
+                <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
               </PieChart>
             </ResponsiveContainer>
           )}
@@ -929,8 +945,8 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
             <CartesianGrid stroke="#2A3140" vertical={false} />
             <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} />
             <YAxis stroke="#7C8797" fontSize={11} />
-            <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF(v)} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
+            <Legend wrapperStyle={{ fontSize: "var(--fs-sm)" }} />
             <Bar dataKey="entrate" fill={COLORS.mint} radius={[4, 4, 0, 0]} name="Entrate" />
             <Bar dataKey="spese" fill={COLORS.coral} radius={[4, 4, 0, 0]} name="Spese" />
           </BarChart>
@@ -1009,7 +1025,7 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
     <div>
       <div className="page-toolbar">
         <button className="btn primary" onClick={() => setView("nuova")}><Plus size={15} />Aggiungi spesa</button>
-        <span style={{ fontSize: 12.5, color: "#7C8797" }}>
+        <span style={{ fontSize: "var(--fs-sm)", color: "#7C8797" }}>
           {filtered.length} voci · <strong style={{ color: "var(--text-primary)" }}>{fmtCHF(totale)}</strong> di spese
         </span>
       </div>
@@ -1042,7 +1058,7 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
                   <td>{e.desc}{e.note ? <span style={{ color: "#4E576A" }}> — {e.note}</span> : null}</td>
                   <td><span className="pill">{e.primary.trim()}{e.secondary ? " / " + e.secondary : ""}</span></td>
                   <td className="mono" style={{ textAlign: "right", color: e.primary === INCOME_CAT ? COLORS.mint : e.primary === SAVINGS_CAT ? COLORS.blue : "#E7EBF3" }} title={e.primary === SAVINGS_CAT ? "Risparmio/investimento — non conteggiato tra le spese" : undefined}>{e.primary === INCOME_CAT ? "+" : ""}{fmtCHF2(e.amount)}</td>
-                  <td style={{ width: 30 }}><button className="icon-btn" onClick={() => deleteExpense(e.id)}><Trash2 size={14} /></button></td>
+                  <td style={{ width: 30 }}><button className="icon-btn danger" onClick={() => deleteExpense(e.id)}><Trash2 size={14} /></button></td>
                 </tr>
               ))}
               {pageData.length === 0 && (
@@ -1220,7 +1236,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
                   <th>Asset</th><th>Cur</th>
                   {MONTHS.map((m, i) => (
                     <th key={m} style={{ textAlign: "right", ...colStyle(i) }}>
-                      {m}{i === currentMonthIdx && <div style={{ fontSize: 9, color: COLORS.mint, fontWeight: 700, letterSpacing: 0.4 }}>ORA</div>}
+                      {m}{i === currentMonthIdx && <div style={{ fontSize: "var(--fs-micro)", color: COLORS.mint, fontWeight: 700, letterSpacing: 0.4 }}>ORA</div>}
                     </th>
                   ))}
                   <th></th>
@@ -1245,9 +1261,9 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
                         if (isPriceLinked) {
                           return (
                             <td key={i} className="mono" onClick={() => setExpanded(isSelected ? null : { assetIdx: a.idx, monthIdx: i })}
-                              style={{ textAlign: "right", cursor: "pointer", color: val === null ? "#3A4152" : "#E7EBF3", ...(isSelected ? { background: "rgba(91,141,239,0.16)", boxShadow: "inset 0 0 0 1px rgba(91,141,239,0.5)" } : colStyle(i)) }}
+                              style={{ textAlign: "right", cursor: "pointer", color: cellColor(val, true), ...(isSelected ? { background: "rgba(91,141,239,0.16)", boxShadow: "inset 0 0 0 1px rgba(91,141,239,0.5)" } : colStyle(i)) }}
                               title="Clicca per vedere quote × prezzo di questo mese">
-                              {val === null ? "·" : fmtCHF(val)}
+                              {val === null ? "·" : fmtNum(val)}
                             </td>
                           );
                         }
@@ -1263,15 +1279,15 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
                         }
                         return (
                           <td key={i} className="mono" onClick={() => !isComputed && setEditing({ assetIdx: a.idx, monthIdx: i })}
-                            style={{ textAlign: "right", cursor: isComputed ? "default" : "pointer", color: val === null ? "#3A4152" : explicit || isComputed ? "#E7EBF3" : "#7C8797", ...colStyle(i) }}
+                            style={{ textAlign: "right", cursor: isComputed ? "default" : "pointer", color: cellColor(val, explicit || isComputed), ...colStyle(i) }}
                             title={isAmort ? "Calcolato automaticamente dall'ammortamento" : isFatture ? "Parte delle fatture pagate non ancora consumata — si aggiorna da sé" : explicit ? "Valore registrato" : "Non ancora compilato — clicca per inserirlo"}>
-                            {val === null ? "·" : fmtCHF(val)}
+                            {val === null ? "·" : fmtNum(val)}
                           </td>
                         );
                       })}
                       {/* La riga delle fatture non è un asset salvato: si toglie
                           cancellando la fattura da Strumenti, non da qui. */}
-                      <td>{!isFatture && <button className="icon-btn" onClick={() => deleteAsset(year, a.idx)}><Trash2 size={13} /></button>}</td>
+                      <td>{!isFatture && <button className="icon-btn danger" onClick={() => deleteAsset(year, a.idx)}><Trash2 size={13} /></button>}</td>
                     </tr>
                   );
                 })}
@@ -1299,10 +1315,10 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
       })()}
 
       <div className="card">
-        <div className="card-title">Patrimonio netto totale (CHF) — {year}, calcolato dal vivo sugli asset sopra</div>
+        <div className="card-title" title="Somma di tutte le voci qui sopra, convertite in CHF col cambio di ogni mese">Patrimonio netto (CHF) — {year}</div>
         <table className="data-table">
           <thead><tr>{MONTHS.map((m, i) => <th key={m} style={{ textAlign: "right", ...colStyle(i) }}>{m}</th>)}</tr></thead>
-          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtCHF(v)}</td>)}</tr></tbody>
+          <tbody><tr>{netWorthSeries.map((v, i) => <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, ...colStyle(i) }}>{v === null ? "·" : fmtNum(v)}</td>)}</tr></tbody>
         </table>
       </div>
       </>)}
@@ -1336,7 +1352,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
     <div>
       <div className="card" style={{ marginBottom: 16, textAlign: "center" }}>
         <div className="card-title" style={{ justifyContent: "center" }}>Patrimonio netto — {MONTHS[monthIdx]} {year}</div>
-        <div className="mono" style={{ fontSize: 28, fontWeight: 700 }}>{netWorthValue === null || netWorthValue === undefined ? "—" : fmtCHF(netWorthValue)}</div>
+        <div className="mono" style={{ fontSize: "var(--fs-hero)", fontWeight: 700 }}>{netWorthValue === null || netWorthValue === undefined ? "—" : fmtCHF(netWorthValue)}</div>
       </div>
 
       {groups.map(g => {
@@ -1369,7 +1385,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
                         onBlur={(e) => saveCell(a.idx, e.target.value)}
                         onKeyDown={(e) => { if (e.key === "Enter") saveCell(a.idx, e.target.value); if (e.key === "Escape") setEditing(null); }} />
                     ) : (
-                      <span className="month-row-value mono">{val === null ? "·" : fmtCHF(val)}</span>
+                      <span className="month-row-value mono" style={{ color: cellColor(val, true) }}>{val === null ? "·" : fmtNum(val)}</span>
                     )}
                   </div>
                   {isExpanded && (
@@ -1455,7 +1471,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
   return (
     <div>
       <div className="card-title" style={{ alignItems: "center" }}>
-        <span>Prezzo per quota — {year} <span style={{ fontWeight: 400, color: "#4E576A", textTransform: "none" }}>(clicca un nome per il grafico, clicca una cella per registrare il prezzo)</span></span>
+        <span title="Clicca un nome per vederne il grafico, clicca una cella per registrare il prezzo">Prezzo per quota — {year}</span>
         {setTickers && (
           <button className="btn" style={{ padding: "5px 11px", flexShrink: 0 }} onClick={() => setShowTickerCfg(s => !s)}>
             <RefreshCw size={13} />Prezzi automatici
@@ -1465,7 +1481,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
 
       {setTickers && showTickerCfg && (
         <div style={{ border: "1px solid var(--border-hair)", borderRadius: 10, padding: 14, marginBottom: 14, background: "var(--bg-void)" }}>
-          <p style={{ fontSize: 12.5, color: "#7C8797", lineHeight: 1.6, margin: "0 0 12px" }}>
+          <p style={{ fontSize: "var(--fs-sm)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 12px" }}>
             Per ogni investimento indica il simbolo di <strong>Yahoo Finance</strong> (es. <span className="mono">VWCE.MI</span>, <span className="mono">SYBZ.DE</span>).
             I prezzi si aggiorneranno da soli a ogni apertura: chiusura di fine mese per i mesi passati, prezzo attuale per il mese in corso.
             Attenzione alla valuta: dev'essere la stessa con cui hai impostato l'asset.
@@ -1477,27 +1493,27 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
             return (
               <div key={a.name} style={{ marginBottom: 10 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                  <span style={{ minWidth: 70, fontWeight: 600, fontSize: 13 }}>{a.name}</span>
-                  <span style={{ fontSize: 11, color: "#4E576A" }} className="mono">({wantCur || a.currency})</span>
+                  <span style={{ minWidth: 70, fontWeight: 600, fontSize: "var(--fs-base)" }}>{a.name}</span>
+                  <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }} className="mono">({wantCur || a.currency})</span>
                   <input className="mono" style={{ width: 120 }} placeholder="es. VWCE.MI"
                     value={tickers?.[a.name] || ""}
                     onChange={(e) => setTickers(prev => ({ ...prev, [a.name]: e.target.value.trim().toUpperCase() }))} />
                   <button className="btn" style={{ padding: "6px 11px" }} onClick={() => testTicker(a.name, tickers?.[a.name], wantCur)} disabled={!tickers?.[a.name]}>prova</button>
-                  {tr?.loading && <span style={{ fontSize: 12, color: "#7C8797" }}>…</span>}
+                  {tr?.loading && <span style={{ fontSize: "var(--fs-sm)", color: "#7C8797" }}>…</span>}
                   {tr?.price != null && (
-                    <span style={{ fontSize: 12, color: mismatch ? COLORS.amber : COLORS.mint }} className="mono">
+                    <span style={{ fontSize: "var(--fs-sm)", color: mismatch ? COLORS.amber : COLORS.mint }} className="mono">
                       {tr.price} {tr.currency}{mismatch ? ` ⚠ atteso ${wantCur}` : " ✓"}
                     </span>
                   )}
-                  {tr?.error && <span style={{ fontSize: 12, color: COLORS.coral }}>{tr.error}</span>}
+                  {tr?.error && <span style={{ fontSize: "var(--fs-sm)", color: COLORS.coral }}>{tr.error}</span>}
                 </div>
                 {/* Verifica della conversione: prezzo originale × cambio = prezzo convertito */}
                 {tr?.converted && (
-                  <div className="mono" style={{ fontSize: 11, color: "#7C8797", marginTop: 3, marginLeft: 78 }}>
+                  <div className="mono" style={{ fontSize: "var(--fs-micro)", color: "#7C8797", marginTop: 3, marginLeft: 78 }}>
                     {tr.converted.sourcePrice} {tr.converted.from} × {tr.converted.rate} ({tr.converted.from}→{tr.converted.to}) = {tr.price} {tr.converted.to}
                   </div>
                 )}
-                {tr?.fxError && <div style={{ fontSize: 11, color: COLORS.amber, marginTop: 3, marginLeft: 78 }}>{tr.fxError}</div>}
+                {tr?.fxError && <div style={{ fontSize: "var(--fs-micro)", color: COLORS.amber, marginTop: 3, marginLeft: 78 }}>{tr.fxError}</div>}
               </div>
             );
           })}
@@ -1505,10 +1521,10 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
             <button className="btn primary" style={{ padding: "8px 14px" }} onClick={refreshNow} disabled={refreshStatus === "loading"}>
               <RefreshCw size={14} />{refreshStatus === "loading" ? "Aggiornamento…" : "Aggiorna prezzi ora"}
             </button>
-            {refreshStatus === "done" && <span style={{ fontSize: 12, color: COLORS.mint }}>✓ Prezzi aggiornati</span>}
-            {refreshStatus === "error" && <span style={{ fontSize: 12, color: COLORS.coral }}>Errore. Riprova.</span>}
+            {refreshStatus === "done" && <span style={{ fontSize: "var(--fs-sm)", color: COLORS.mint }}>✓ Prezzi aggiornati</span>}
+            {refreshStatus === "error" && <span style={{ fontSize: "var(--fs-sm)", color: COLORS.coral }}>Errore. Riprova.</span>}
           </div>
-          <p style={{ fontSize: 11, color: "#4E576A", margin: "10px 0 0" }}>
+          <p style={{ fontSize: "var(--fs-micro)", color: "#4E576A", margin: "10px 0 0" }}>
             I prezzi vengono presi da Yahoo Finance (fonte non ufficiale): affidabile ma senza garanzie. Le celle sotto restano comunque modificabili a mano.
             Si aggiornano anche da soli a ogni apertura dell'app.
           </p>
@@ -1554,7 +1570,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
                 <td className="mono" style={{ textAlign: "right", color: mtd === null ? "#4E576A" : mtd >= 0 ? COLORS.mint : COLORS.coral }}>{fmtPct(mtd)}</td>
                 <td>
                   {lastIdx !== undefined && lastIdx >= 0 && (
-                    <button className="icon-btn" title={`Cancella il prezzo di ${MONTHS[lastIdx]} (ultimo inserito)`} onClick={() => clearLastPrice(a.name, lastIdx)}>
+                    <button className="icon-btn danger" title={`Cancella il prezzo di ${MONTHS[lastIdx]} (ultimo inserito)`} onClick={() => clearLastPrice(a.name, lastIdx)}>
                       <Trash2 size={13} />
                     </button>
                   )}
@@ -1574,7 +1590,7 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
                 <CartesianGrid stroke="#2A3140" vertical={false} />
                 <XAxis dataKey="label" stroke="#7C8797" fontSize={10.5} />
                 <YAxis stroke="#7C8797" fontSize={11} domain={["auto", "auto"]} />
-                <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: 12 }} formatter={(v) => fmtCHF2(v)} />
+                <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF2(v)} />
                 {/* Nessun pallino sui punti: la linea resta pulita. Il punto compare
                     solo al passaggio del mouse, per leggere il valore del mese. */}
                 <Line type="monotone" dataKey="value" stroke={COLORS.blue} strokeWidth={2} dot={false} activeDot={{ r: 4 }} />
@@ -1601,10 +1617,10 @@ function UpdateMonthModal({ yr, year, monthIdx, onClose, onSave }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Aggiorna cifre di {MONTHS[monthIdx]} {year}</h3>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Aggiorna cifre di {MONTHS[monthIdx]} {year}</h3>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
-        <p style={{ fontSize: 12.5, color: "#7C8797", marginTop: 0, marginBottom: 16 }}>
+        <p style={{ fontSize: "var(--fs-sm)", color: "#7C8797", marginTop: 0, marginBottom: 16 }}>
           Ogni campo è precompilato con l'ultimo valore noto. Modifica solo quello che è cambiato (es. il saldo del conto) e salva.
         </p>
         <div style={{ maxHeight: 380, overflowY: "auto", paddingRight: 4 }}>
@@ -1632,19 +1648,19 @@ function CellDetailBar({ asset, monthIdx, year, prices, updatePrice, updateAsset
 
   return (
     <div style={{ marginTop: 14, padding: "12px 16px", background: "rgba(91,141,239,0.08)", border: "1px solid rgba(91,141,239,0.35)", borderRadius: 10, display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-      <div style={{ fontSize: 12.5, fontWeight: 600, color: COLORS.blue }}>{asset.name} · {MONTHS[monthIdx]} {year}</div>
-      <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13 }}>
-        <span style={{ color: "#7C8797", fontSize: 11 }}>quote</span>
+      <div style={{ fontSize: "var(--fs-sm)", fontWeight: 600, color: COLORS.blue }}>{asset.name} · {MONTHS[monthIdx]} {year}</div>
+      <div className="mono" style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "var(--fs-base)" }}>
+        <span style={{ color: "#7C8797", fontSize: "var(--fs-micro)" }}>quote</span>
         <input type="number" step="0.0001" style={{ width: 70, textAlign: "right" }}
           defaultValue={asset.units}
           onBlur={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) updateAsset(year, asset.idx, { units: n }); }} />
         <span style={{ color: "#4E576A" }}>×</span>
-        <span style={{ color: "#7C8797", fontSize: 11 }}>prezzo</span>
+        <span style={{ color: "#7C8797", fontSize: "var(--fs-micro)" }}>prezzo</span>
         <input type="number" step="0.01" style={{ width: 74, textAlign: "right" }}
           defaultValue={priceVal ?? ""}
           onBlur={(e) => { const n = parseFloat(e.target.value); if (!isNaN(n)) updatePrice(String(year), asset.name, monthIdx, Math.round(n * 10000) / 10000); }} />
         <span style={{ color: "#4E576A" }}>=</span>
-        <span style={{ fontWeight: 700, fontSize: 14.5, color: COLORS.mint }}>{total === null ? "—" : fmtCHF2(total)}</span>
+        <span style={{ fontWeight: 700, fontSize: "var(--fs-md)", color: COLORS.mint }}>{total === null ? "—" : fmtCHF2(total)}</span>
       </div>
       <button className="icon-btn" style={{ marginLeft: "auto" }} onClick={onClose}><X size={15} /></button>
     </div>
@@ -1661,7 +1677,7 @@ function AssetFormModal({ onClose, onSave }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Nuovo asset</h3>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Nuovo asset</h3>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="field"><label className="field-label">Nome</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="es. Conto risparmio" /></div>
@@ -1699,7 +1715,7 @@ function Movimenti({ patrimonio, movements, addMovement, deleteMovement, prices 
       </div>
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: 0 }}>
+        <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: 0 }}>
           Esempio: compri 50 quote di VWCE a 165.90. Registri qui un movimento "Acquisto investimento": l'app toglie automaticamente il controvalore dal conto che scegli come provenienza e lo aggiunge all'ETF, aggiornando le quote possedute — senza creare nessuna voce nelle Spese.
         </p>
       </div>
@@ -1715,7 +1731,7 @@ function Movimenti({ patrimonio, movements, addMovement, deleteMovement, prices 
                 <td>{m.from}</td>
                 <td>{m.to}{m.qty ? <span style={{ color: "#4E576A" }}> ({m.qty} quote @ {fmtCHF2(m.price)})</span> : null}</td>
                 <td className="mono" style={{ textAlign: "right" }}>{fmtCHF2(m.amount)}</td>
-                <td><button className="icon-btn" onClick={() => deleteMovement(m.id)}><Trash2 size={13} /></button></td>
+                <td><button className="icon-btn danger" onClick={() => deleteMovement(m.id)}><Trash2 size={13} /></button></td>
               </tr>
             ))}
             {movements.length === 0 && <tr><td colSpan={6}><div className="empty-state">Nessun movimento registrato ancora.</div></td></tr>}
@@ -1789,7 +1805,7 @@ function MovementFormModal({ patrimonio, prices, onClose, onSave }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Nuovo movimento patrimoniale</h3>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Nuovo movimento patrimoniale</h3>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="tabs-row" style={{ marginBottom: 14 }}>
@@ -1876,7 +1892,7 @@ function AmmortamentoTool({ patrimonio, updateAsset, addAsset }) {
         <div className="card-title">
           Come funziona
         </div>
-        <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: 0 }}>
+        <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: 0 }}>
           Segna un bene (scooter, bici, materiale sportivo, elettronica…) come <strong style={{ color: "#E7EBF3" }}>ammortizzabile</strong>: indica valore d'acquisto, data e tasso annuo di svalutazione. Da quel momento il valore nel foglio Patrimonio si aggiorna automaticamente mese per mese, senza calcoli manuali.
         </p>
       </div>
@@ -1888,15 +1904,15 @@ function AmmortamentoTool({ patrimonio, updateAsset, addAsset }) {
         </div>
         {amortAssets.length === 0 ? <div className="empty-state">Nessun bene ammortizzabile configurato.</div> : (
           <table className="data-table">
-            <thead><tr><th>Nome</th><th>Valore iniziale</th><th>Data acquisto</th><th>Tasso/anno</th><th style={{ textAlign: "right" }}>Valore oggi</th></tr></thead>
+            <thead><tr><th>Nome</th><th>Valore iniziale (CHF)</th><th>Data acquisto</th><th>Tasso/anno</th><th style={{ textAlign: "right" }}>Valore oggi (CHF)</th></tr></thead>
             <tbody>
               {amortAssets.map(a => (
                 <tr key={a.idx}>
                   <td>{a.name}</td>
-                  <td className="mono">{fmtCHF(a.ammortamento.acquisitionValue)}</td>
+                  <td className="mono">{fmtNum(a.ammortamento.acquisitionValue)}</td>
                   <td className="mono" style={{ color: "#7C8797" }}>{a.ammortamento.acquisitionDate}</td>
                   <td className="mono">{a.ammortamento.annualRate}%</td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 600, color: COLORS.amber }}>{fmtCHF(computeAmmortamentoValue(a.ammortamento))}</td>
+                  <td className="mono" style={{ textAlign: "right", fontWeight: 600, color: COLORS.amber }}>{fmtNum(computeAmmortamentoValue(a.ammortamento))}</td>
                 </tr>
               ))}
             </tbody>
@@ -1922,7 +1938,7 @@ function AmmortamentoFormModal({ onClose, onSave }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-          <h3 style={{ margin: 0, fontSize: 16 }}>Nuovo bene ammortizzabile</h3>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Nuovo bene ammortizzabile</h3>
           <button className="icon-btn" onClick={onClose}><X size={18} /></button>
         </div>
         <div className="field"><label className="field-label">Nome</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="es. Bici da corsa" /></div>
@@ -1995,7 +2011,7 @@ function FattureTool({ categories, addExpenses, fatture, addFattura, deleteFattu
     <div>
       <div className="page-toolbar">
         <button className="btn primary" onClick={() => setShowForm(true)}><Plus size={15} />Nuova fattura</button>
-        <span style={{ fontSize: 12.5, color: "#7C8797" }}>
+        <span style={{ fontSize: "var(--fs-sm)", color: "#7C8797" }}>
           {aperte} in corso · <strong style={{ color: "var(--text-primary)" }}>{fmtCHF(residuoOggi)}</strong> non ancora consumati
         </span>
       </div>
@@ -2006,7 +2022,7 @@ function FattureTool({ categories, addExpenses, fatture, addFattura, deleteFattu
           <thead><tr>{MONTHS.map(m => <th key={m} style={{ textAlign: "right" }}>{m}</th>)}</tr></thead>
           <tbody><tr>{residui.map((v, i) => (
             <td key={i} className="mono" style={{ textAlign: "right", fontWeight: 600, color: v > 0 ? "#E7EBF3" : "#3A4152" }}>
-              {v > 0 ? fmtCHF(v) : "·"}
+              {v > 0 ? fmtNum(v) : "·"}
             </td>
           ))}</tr></tbody>
         </table>
@@ -2019,7 +2035,7 @@ function FattureTool({ categories, addExpenses, fatture, addFattura, deleteFattu
             <thead>
               <tr>
                 <th>Descrizione</th><th>Pagata il</th><th>Competenza</th>
-                <th style={{ textAlign: "right" }}>Al mese</th><th style={{ textAlign: "right" }}>Residuo</th><th></th>
+                <th style={{ textAlign: "right" }}>Al mese (CHF)</th><th style={{ textAlign: "right" }}>Residuo (CHF)</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -2029,9 +2045,9 @@ function FattureTool({ categories, addExpenses, fatture, addFattura, deleteFattu
                   <td className="mono" style={{ color: "#7C8797", whiteSpace: "nowrap" }}>{r.paidDate}</td>
                   <td style={{ whiteSpace: "nowrap" }}>{r.periodo}</td>
                   <td className="mono" style={{ textAlign: "right", color: "#7C8797" }}>{fmtCHF2(r.quota)}</td>
-                  <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{r.residuo > 0 ? fmtCHF(r.residuo) : "conclusa"}</td>
+                  <td className="mono" style={{ textAlign: "right", fontWeight: 600 }}>{r.residuo > 0 ? fmtNum(r.residuo) : "conclusa"}</td>
                   <td style={{ width: 30 }}>
-                    <button className="icon-btn" onClick={() => deleteFattura(r.id)} title="Togli dal patrimonio (le spese già inserite restano)"><Trash2 size={14} /></button>
+                    <button className="icon-btn danger" onClick={() => deleteFattura(r.id)} title="Togli dal patrimonio (le spese già inserite restano)"><Trash2 size={14} /></button>
                   </td>
                 </tr>
               ))}
@@ -2049,9 +2065,9 @@ function CheckRow({ checked, onChange, label, hint }) {
     <label style={{ display: "flex", alignItems: "flex-start", gap: 9, cursor: "pointer", marginBottom: 13 }}>
       <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)}
         style={{ width: 17, height: 17, minWidth: 17, margin: "1px 0 0", padding: 0, accentColor: COLORS.mint }} />
-      <span style={{ fontSize: 12.5, lineHeight: 1.45 }}>
+      <span style={{ fontSize: "var(--fs-sm)", lineHeight: 1.45 }}>
         {label}
-        {hint && <span style={{ display: "block", color: "#7C8797", fontSize: 11.5, marginTop: 2 }}>{hint}</span>}
+        {hint && <span style={{ display: "block", color: "#7C8797", fontSize: "var(--fs-micro)", marginTop: 2 }}>{hint}</span>}
       </span>
     </label>
   );
@@ -2150,12 +2166,12 @@ function NuovaFatturaForm({ categories, onClose, onSave }) {
           <>
             {preview.residuo.length > 0 && (
               <div style={{ marginBottom: 18, overflowX: "auto" }}>
-                <div style={{ fontSize: 11.5, color: "#7C8797", marginBottom: 8 }}>Nel patrimonio, a fine mese</div>
+                <div style={{ fontSize: "var(--fs-micro)", color: "#7C8797", marginBottom: 8 }}>Nel patrimonio, a fine mese (CHF)</div>
                 <table className="data-table">
                   <thead><tr>{preview.residuo.map(r => <th key={r.label} style={{ textAlign: "right" }}>{r.label}</th>)}</tr></thead>
                   <tbody><tr>{preview.residuo.map(r => (
                     <td key={r.label} className="mono" style={{ textAlign: "right", color: r.value > 0 ? "#E7EBF3" : "#3A4152" }}>
-                      {r.value > 0 ? fmtCHF(r.value) : "·"}
+                      {r.value > 0 ? fmtNum(r.value) : "·"}
                     </td>
                   ))}</tr></tbody>
                 </table>
@@ -2163,7 +2179,7 @@ function NuovaFatturaForm({ categories, onClose, onSave }) {
             )}
             {preview.rate.length > 0 && (
               <div style={{ overflowX: "auto" }}>
-                <div style={{ fontSize: 11.5, color: "#7C8797", marginBottom: 8 }}>Nelle spese</div>
+                <div style={{ fontSize: "var(--fs-micro)", color: "#7C8797", marginBottom: 8 }}>Nelle spese</div>
                 <table className="data-table">
                   <thead><tr><th>Data</th><th>Descrizione</th><th style={{ textAlign: "right" }}>Importo</th></tr></thead>
                   <tbody>
@@ -2236,7 +2252,7 @@ function Categorie({ categories, setCategories, budgets, setBudgets }) {
           <div className="card" key={p}>
             <div className="card-title">
               {p.trim()}
-              <button className="icon-btn" onClick={() => removePrimary(p)}><Trash2 size={13} /></button>
+              <button className="icon-btn danger" onClick={() => removePrimary(p)}><Trash2 size={13} /></button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
               {secs.map(s => (
@@ -2245,16 +2261,16 @@ function Categorie({ categories, setCategories, budgets, setBudgets }) {
                   <X size={11} style={{ cursor: "pointer" }} onClick={() => removeSecondary(p, s)} />
                 </span>
               ))}
-              {secs.length === 0 && <span style={{ fontSize: 12, color: "#4E576A" }}>Nessuna sottocategoria</span>}
+              {secs.length === 0 && <span style={{ fontSize: "var(--fs-sm)", color: "#4E576A" }}>Nessuna sottocategoria</span>}
             </div>
             {setBudgets && isSpesa(p) && (
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-                <span style={{ fontSize: 11.5, color: "#4E576A" }}>Budget mensile</span>
+                <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>Budget mensile</span>
                 <input type="number" step="10" min="0" placeholder="—" className="mono"
                   style={{ width: 84, textAlign: "right", padding: "5px 8px" }}
                   value={budgets?.[p] ?? ""}
                   onChange={(e) => setBudget(p, e.target.value)} />
-                <span style={{ fontSize: 11.5, color: "#4E576A" }}>CHF</span>
+                <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>CHF</span>
               </div>
             )}
             <div style={{ display: "flex", gap: 6 }}>
@@ -2456,7 +2472,7 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
       {sub === "esporta" && (
         <div className="card" style={{ maxWidth: 460 }}>
           <div className="card-title">Esporta i tuoi dati</div>
-          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
+          <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 16px" }}>
             Scarica una copia dei tuoi dati sul dispositivo. I file vengono generati qui sul telefono/computer,
             non passano da nessun server.
           </p>
@@ -2465,26 +2481,26 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
             <button className="btn primary" style={{ justifyContent: "center" }} onClick={handleExcel} disabled={exporting}>
               <Download size={15} />{exporting ? "Preparazione…" : "Esporta in Excel (.xlsx)"}
             </button>
-            <span style={{ fontSize: 11.5, color: "#4E576A" }}>
+            <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>
               Un unico file Excel con più fogli: <strong style={{ color: "#7C8797" }}>Spese</strong>, e per ogni anno
               il <strong style={{ color: "#7C8797" }}>Patrimonio</strong> (valore di ogni voce mese per mese, con patrimonio netto)
               e gli <strong style={{ color: "#7C8797" }}>Investimenti</strong> (valore a fine mese e prezzo per quota).
             </span>
-            {exportError && <span style={{ fontSize: 12, color: "var(--coral)" }}>{exportError}</span>}
+            {exportError && <span style={{ fontSize: "var(--fs-sm)", color: "var(--coral)" }}>{exportError}</span>}
           </div>
 
           <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
             <button className="btn" style={{ justifyContent: "center" }} onClick={() => esportaBackupJSON(data)}>
               <Save size={15} />Backup completo (JSON)
             </button>
-            <span style={{ fontSize: 11.5, color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza, ripristinabile in futuro.</span>
+            <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza, ripristinabile in futuro.</span>
           </div>
         </div>
       )}
       {sub === "asset" && (
         <div className="card" style={{ maxWidth: 420 }}>
           <div className="card-title">Aggiungi un nuovo asset</div>
-          <p style={{ fontSize: 13, color: "#7C8797", lineHeight: 1.6, margin: "0 0 14px" }}>
+          <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 14px" }}>
             Crea una nuova voce di patrimonio (conto, investimento, mezzo di trasporto…). Scegli in quale anno aggiungerla:
             comparirà nel foglio Patrimonio di quell'anno.
           </p>
@@ -2515,7 +2531,7 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
 
       <div className="card" style={{ marginBottom: 18, maxWidth: 420 }}>
         <div className="card-title">Email</div>
-        <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 12 }}>Email attuale: <strong>{user.email}</strong></p>
+        <p style={{ fontSize: "var(--fs-base)", color: "var(--text-muted)", marginBottom: 12 }}>Email attuale: <strong>{user.email}</strong></p>
         <div className="field">
           <label className="field-label">Nuova email</label>
           <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="nuova@email.com" style={{ width: "100%" }} />
