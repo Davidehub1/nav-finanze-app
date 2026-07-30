@@ -19,7 +19,11 @@ import { GlobalStyle } from "./GlobalStyle.jsx";
 
 /* ============ COSTANTI ============ */
 const MONTHS = ["Gen","Feb","Mar","Apr","Mag","Giu","Lug","Ago","Set","Ott","Nov","Dic"];
-const YEARS = [2024, 2025, 2026, 2027];
+// Gli anni non sono scritti a mano: partono dal primo anno di dati di Davide e
+// arrivano al prossimo, così il 1° gennaio l'app non resta indietro da sola.
+// Il +1 serve anche alle fatture di 12 mesi pagate a fine anno, che sconfinano.
+const ANNO_INIZIALE = 2024;
+const YEARS = Array.from({ length: Math.max(2, new Date().getFullYear() + 1 - ANNO_INIZIALE + 1) }, (_, i) => ANNO_INIZIALE + i);
 
 // Categoria delle entrate (non è una spesa) e categoria dei risparmi/investimenti
 // (soldi messi da parte, quindi NON spese di consumo). Entrambe sono escluse dai
@@ -184,7 +188,7 @@ function getAssetValueAtMonth(asset, monthIdx, refDate, prices, year) {
 }
 
 /* ============ PREZZI PER QUOTA: helper ============ */
-const PRICE_YEARS = ["2024", "2025", "2026", "2027"];
+const PRICE_YEARS = YEARS.map(String);
 
 // Serie continua di tutti i mesi con prezzo registrato, in ordine cronologico, per un dato asset
 function getPriceTimeline(prices, assetName) {
@@ -299,6 +303,74 @@ function getCompositionSeries(patrimonio, fatture, fx, prices, fxHistory, soloAn
     }
   }
   return out;
+}
+
+/* ============ SPESE RICORRENTI ============
+   Palestra, treno e stipendio tornano ogni mese e finora andavano ribattuti a mano.
+   Una regola dice cosa e quanto; l'app tiene il conto di dove è arrivata con
+   `ultimoGenerato` e propone i mesi mancanti.
+
+   Le spese NON vengono create di nascosto: la proposta si vede e si conferma con un
+   tocco. Righe che compaiono da sole nei conti, magari da una regola sbagliata, sono
+   esattamente il genere di cosa che si scopre troppo tardi. */
+function mesiDovuti(r, oggiAbs) {
+  if (r.attiva === false) return [];
+  const inizio = r.ultimoGenerato ? parseMonth(r.ultimoGenerato) + 1 : parseMonth(r.dal);
+  const fine = Math.min(oggiAbs, r.al ? parseMonth(r.al) : oggiAbs);
+  const out = [];
+  for (let k = inizio; k <= fine && out.length < 24; k++) out.push(k);
+  return out;
+}
+
+// Data della spesa dentro il mese: il giorno scelto, ma senza sbordare nei mesi
+// corti (il 31 a febbraio diventa il 28).
+function dataRicorrente(k, giorno) {
+  const y = Math.floor(k / 12), m = ((k % 12) + 12) % 12;
+  const ultimo = new Date(y, m + 1, 0).getDate();
+  const g = Math.min(Math.max(1, giorno || 1), ultimo);
+  return `${y}-${String(m + 1).padStart(2, "0")}-${String(g).padStart(2, "0")}`;
+}
+
+function proposteRicorrenti(ricorrenti, oggi = new Date()) {
+  const oggiAbs = absMonth(oggi.getFullYear(), oggi.getMonth());
+  const righe = [];
+  const aggiornamenti = {};
+  for (const r of ricorrenti || []) {
+    const mesi = mesiDovuti(r, oggiAbs);
+    if (!mesi.length) continue;
+    for (const k of mesi) {
+      righe.push({
+        regola: r.id, etichetta: meseLabel(k),
+        date: dataRicorrente(k, r.giorno), desc: r.desc, amount: r.amount,
+        primary: r.primary, secondary: r.secondary || "", note: r.note || "",
+      });
+    }
+    aggiornamenti[r.id] = meseKeyDa(mesi[mesi.length - 1]);
+  }
+  return { righe, aggiornamenti };
+}
+const meseKeyDa = (k) => `${Math.floor(k / 12)}-${String((((k % 12) + 12) % 12) + 1).padStart(2, "0")}`;
+
+/* ============ STORIA DI UNA CATEGORIA ============
+   Dopo aver visto che una voce è cresciuta, la domanda successiva è sempre "e negli
+   altri mesi?". I dati ci sono già tutti: bastava andarli a prendere su più anni,
+   invece di fermarsi all'anno selezionato come fa il resto della Dashboard. */
+function storiaCategoria(expenses, cat, year, monthIdx, quanti = 24) {
+  const fine = absMonth(year, monthIdx);
+  const somme = new Map();
+  for (const e of expenses || []) {
+    if (e.primary !== cat) continue;
+    const [y, m] = e.date.split("-").map(Number);
+    const k = absMonth(y, m - 1);
+    somme.set(k, (somme.get(k) || 0) + e.amount);
+  }
+  const punti = Array.from({ length: quanti }, (_, i) => {
+    const k = fine - (quanti - 1) + i;
+    return { mese: meseLabel(k), importo: Math.round((somme.get(k) || 0) * 100) / 100, corrente: k === fine };
+  });
+  const conSpesa = punti.filter(p => p.importo > 0);
+  const media = conSpesa.length ? conSpesa.reduce((s, p) => s + p.importo, 0) / conSpesa.length : 0;
+  return { punti, media, massimo: punti.reduce((m, p) => Math.max(m, p.importo), 0) };
 }
 
 /* ============ MESI DI AUTONOMIA ============
@@ -476,8 +548,24 @@ function applyTrackedPrices(data, results) {
 }
 
 /* ============ COMPONENTE PRINCIPALE ============ */
-const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {}, fatture: [], layout: {} };
+const EMPTY_DATA = { expenses: [], patrimonio: {}, categories: {}, movements: [], fxRates: FX_DEFAULT, prices: {}, displayName: "", tickers: {}, fxHistory: {}, budgets: {}, fatture: [], layout: {}, ricorrenti: [] };
 const MAX_HISTORY = 30;
+
+/* ============ COPIA LOCALE PER L'USO SENZA RETE ============
+   Serve solo a poter APRIRE l'app e guardare i numeri quando manca la connessione.
+   Non riattiva mai il salvataggio: la regola per cui non si scrive senza aver
+   letto davvero i dati resta intoccabile, è quella che ha salvato i dati veri. */
+const chiaveCache = (userId) => "copia-dati-" + userId;
+function scriviCache(userId, data) {
+  try { localStorage.setItem(chiaveCache(userId), JSON.stringify({ quando: Date.now(), data })); }
+  catch { /* spazio esaurito o navigazione privata: si continua senza copia */ }
+}
+function leggiCache(userId) {
+  try {
+    const g = JSON.parse(localStorage.getItem(chiaveCache(userId)) || "null");
+    return g?.data ? g : null;
+  } catch { return null; }
+}
 
 function FinanceApp({ user }) {
   const [tab, setTab] = useState("dashboard");
@@ -486,6 +574,7 @@ function FinanceApp({ user }) {
   const [past, setPast] = useState([]);
   const [saveStatus, setSaveStatus] = useState("saved"); // idle | pending | saving | saved
   const [loadError, setLoadError] = useState(null); // se valorizzato, il salvataggio resta disattivato
+  const [daCache, setDaCache] = useState(null); // { quando } se stiamo guardando la copia locale
   const [year, setYear] = useState(2026);
 
   // Caricamento iniziale da Supabase. Al primissimo accesso non esiste ancora
@@ -496,8 +585,10 @@ function FinanceApp({ user }) {
       try {
         const loadedData = await loadOrSeedUserData(user.id);
         if (!cancelled) {
-          setData({ ...loadedData, patrimonio: migratePatrimonio(loadedData.patrimonio) });
+          const pronti = { ...loadedData, patrimonio: migratePatrimonio(loadedData.patrimonio) };
+          setData(pronti);
           setLoaded(true);
+          scriviCache(user.id, pronti);
         }
       } catch (e) {
         console.error("Errore nel caricamento dati da Supabase:", e);
@@ -506,6 +597,13 @@ function FinanceApp({ user }) {
           // salvataggio (loaded resta false), altrimenti salveremmo uno stato
           // vuoto sopra ai dati veri, cancellandoli.
           setLoadError(e?.message || "Impossibile caricare i dati.");
+          // Se c'è una copia locale, l'app si apre lo stesso in sola lettura
+          // invece di mostrare solo una schermata di errore.
+          const copia = leggiCache(user.id);
+          if (copia) {
+            setData({ ...EMPTY_DATA, ...copia.data, patrimonio: migratePatrimonio(copia.data.patrimonio || {}) });
+            setDaCache({ quando: copia.quando });
+          }
         }
       }
     })();
@@ -520,7 +618,7 @@ function FinanceApp({ user }) {
     const t = setTimeout(() => {
       setSaveStatus("saving");
       persistUserData(user.id, data)
-        .then(() => setSaveStatus("saved"))
+        .then(() => { setSaveStatus("saved"); scriviCache(user.id, data); })
         .catch((e) => { console.error("Errore nel salvataggio su Supabase:", e?.message || e, e); setSaveStatus("error"); });
     }, 800);
     return () => clearTimeout(t);
@@ -558,6 +656,25 @@ function FinanceApp({ user }) {
     setData(prev => ({ ...prev, layout: { ...(prev.layout || {}), ...patch } }));
   }, []);
 
+  // Ripristino da backup: sostituisce tutto lo stato. Passa dalla cronologia,
+  // così se il file era quello sbagliato "Annulla" riporta indietro i dati veri.
+  const restoreData = useCallback((nuovi) => {
+    applyChange(() => ({ ...EMPTY_DATA, ...nuovi, patrimonio: migratePatrimonio(nuovi.patrimonio || {}) }));
+  }, [applyChange]);
+
+  const setRicorrenti = useCallback((updater) => {
+    applyChange(prev => ({ ...prev, ricorrenti: typeof updater === "function" ? updater(prev.ricorrenti || []) : updater }));
+  }, [applyChange]);
+  // Le spese e l'avanzamento delle regole si scrivono insieme: se "Annulla"
+  // riportasse indietro solo una delle due, i mesi risulterebbero già registrati.
+  const registraRicorrenti = useCallback((righe, aggiornamenti) => {
+    applyChange(prev => ({
+      ...prev,
+      expenses: [...righe.map(x => ({ ...x, id: uid() })), ...prev.expenses],
+      ricorrenti: (prev.ricorrenti || []).map(r => aggiornamenti[r.id] ? { ...r, ultimoGenerato: aggiornamenti[r.id] } : r),
+    }));
+  }, [applyChange]);
+
   const addFattura = useCallback((f) => {
     applyChange(prev => ({ ...prev, fatture: [...(prev.fatture || []), { ...f, id: uid() }] }));
   }, [applyChange]);
@@ -567,6 +684,9 @@ function FinanceApp({ user }) {
 
   const addExpenses = useCallback((newOnes) => {
     applyChange(prev => ({ ...prev, expenses: [...newOnes.map(x => ({ ...x, id: uid() })), ...prev.expenses] }));
+  }, [applyChange]);
+  const updateExpense = useCallback((id, patch) => {
+    applyChange(prev => ({ ...prev, expenses: prev.expenses.map(e => e.id === id ? { ...e, ...patch } : e) }));
   }, [applyChange]);
   const deleteExpense = useCallback((id) => {
     applyChange(prev => ({ ...prev, expenses: prev.expenses.filter(e => e.id !== id) }));
@@ -691,7 +811,7 @@ function FinanceApp({ user }) {
     );
   }
 
-  if (!loaded) {
+  if (!loaded && !daCache) {
     return (
       <div className="nav-root" style={{ alignItems: "center", justifyContent: "center" }}>
         <GlobalStyle />
@@ -701,16 +821,25 @@ function FinanceApp({ user }) {
   }
 
   return (
-    <div className="nav-root">
+    <div className={"nav-root" + (daCache ? " sola-lettura" : "")}>
       <GlobalStyle />
       <Sidebar tab={tab} setTab={setTab} />
       <main className="nav-main">
+        {daCache && (
+          <div className="banner-offline">
+            <span>
+              Sei senza rete: stai guardando la copia del {new Date(daCache.quando).toLocaleString("it-CH", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}.
+              {" "}<strong>Non si può modificare niente</strong>, così non rischi di perdere quello che scrivi.
+            </span>
+            <button className="btn" onClick={() => window.location.reload()}><RefreshCw size={14} />Riprova</button>
+          </div>
+        )}
         <AppHeader title={TAB_TITLES[tab]} past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard layout={data.layout} setLayout={setLayout} expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} fatture={fatture} />}
         {tab === "patrimonio" && <Patrimonio layout={data.layout} setLayout={setLayout} expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
-        {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
-        {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
-        {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
+        {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} updateExpense={updateExpense} ricorrenti={data.ricorrenti} registraRicorrenti={registraRicorrenti} />}
+        {tab === "strumenti" && <Strumenti ricorrenti={data.ricorrenti} setRicorrenti={setRicorrenti} patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
+        {tab === "profilo" && <Profilo restoreData={restoreData} user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
       </main>
     </div>
   );
@@ -1042,6 +1171,7 @@ function Dashboard({ layout, setLayout, expenses, patrimonio, year, setYear, fxR
   // Composizione del patrimonio: di default tutta la storia, con la possibilità di
   // restringersi all'anno scelto. Il bordo superiore dell'area è il patrimonio netto.
   const [soloAnno, setSoloAnno] = useState(false);
+  const [catAperta, setCatAperta] = useState(null); // categoria di cui si guarda la storia
   const composizione = useMemo(
     () => getCompositionSeries(patrimonio, fatture, fxRates, prices, fxHistory, soloAnno ? year : null),
     [patrimonio, fatture, fxRates, prices, fxHistory, soloAnno, year]
@@ -1148,7 +1278,9 @@ function Dashboard({ layout, setLayout, expenses, patrimonio, year, setYear, fxR
               const pct = monthBreakdown.total ? (r.amount / monthBreakdown.total) * 100 : 0;
               const col = colorFor(r.cat);
               return (
-                <div key={r.cat} style={{ padding: "12px 2px", borderBottom: "1px solid rgba(42,49,64,0.5)" }}>
+                <div key={r.cat} onClick={() => setCatAperta(c => c === r.cat ? null : r.cat)}
+                  title="Tocca per vedere l'andamento degli ultimi due anni"
+                  style={{ padding: "12px 2px", borderBottom: "1px solid rgba(42,49,64,0.5)", cursor: "pointer" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10, marginBottom: 7 }}>
                     <span style={{ display: "inline-flex", alignItems: "center", gap: 8, fontWeight: 600 }}>
                       <span style={{ width: 10, height: 10, borderRadius: 3, background: col, flexShrink: 0 }} />
@@ -1176,6 +1308,29 @@ function Dashboard({ layout, setLayout, expenses, patrimonio, year, setYear, fxR
                       </span>
                     )}
                   </div>
+                  {catAperta === r.cat && (() => {
+                    const st = storiaCategoria(expenses, r.cat, year, selMonth);
+                    return (
+                      <div style={{ marginTop: 12, paddingTop: 12, borderTop: "1px solid rgba(42,49,64,0.6)" }}>
+                        <div style={{ fontSize: "var(--fs-micro)", color: "#7C8797", marginBottom: 8 }}>
+                          Ultimi 24 mesi · media {fmtCHF(st.media)} nei mesi con spesa · massimo {fmtCHF(st.massimo)}
+                        </div>
+                        <ResponsiveContainer width="100%" height={150}>
+                          <BarChart data={st.punti}>
+                            <CartesianGrid stroke="#2A3140" vertical={false} />
+                            <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} interval="preserveStartEnd" minTickGap={26} />
+                            <YAxis stroke="#7C8797" fontSize={11} width={44} tickFormatter={(v) => v >= 1000 ? (v / 1000) + "k" : v} />
+                            <Tooltip cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                              contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }}
+                              formatter={(v) => [fmtCHF(v), r.cat.trim()]} />
+                            <Bar dataKey="importo" radius={[3, 3, 0, 0]}>
+                              {st.punti.map((p, i) => <Cell key={i} fill={col} fillOpacity={p.corrente ? 1 : 0.45} />)}
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </div>
+                    );
+                  })()}
                 </div>
               );
             })}
@@ -1333,7 +1488,8 @@ function MonthStepper({ month, setMonth, year, setYear }) {
 }
 
 /* ============ SPESE ============ */
-function Spese({ expenses, categories, addExpenses, deleteExpense }) {
+function Spese({ expenses, categories, addExpenses, deleteExpense, updateExpense, ricorrenti, registraRicorrenti }) {
+  const [inModifica, setInModifica] = useState(null);
   const [view, setView] = useState("nuova"); // nuova | storico
   const [filterYear, setFilterYear] = useState("Tutti");
   const [filterCat, setFilterCat] = useState("Tutte");
@@ -1345,19 +1501,36 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
     return expenses
       .filter(e => filterYear === "Tutti" || e.date.startsWith(String(filterYear)))
       .filter(e => filterCat === "Tutte" || e.primary === filterCat)
-      .filter(e => !search || e.desc.toLowerCase().includes(search.toLowerCase()))
+      // La ricerca guarda descrizione E nota: "regalo mamma" spesso sta nella nota.
+      .filter(e => {
+        if (!search) return true;
+        const q = search.toLowerCase();
+        return e.desc.toLowerCase().includes(q) || (e.note || "").toLowerCase().includes(q);
+      })
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [expenses, filterYear, filterCat, search]);
 
   const totale = filtered.reduce((s, e) => s + (isSpesa(e.primary) ? e.amount : 0), 0);
   const pageData = filtered.slice(0, page * PER_PAGE);
 
+  const proposta = <RicorrentiDaRegistrare ricorrenti={ricorrenti} registraRicorrenti={registraRicorrenti} />;
+
   if (view === "nuova") {
-    return <NuovaSpesaForm categories={categories} onClose={() => setView("storico")} onSave={(exp) => addExpenses([exp])} />;
+    return (
+      <div>
+        {proposta}
+        <NuovaSpesaForm categories={categories} onClose={() => setView("storico")} onSave={(exp) => addExpenses([exp])} />
+      </div>
+    );
   }
 
   return (
     <div>
+      {proposta}
+      {inModifica && (
+        <ModificaSpesaModal spesa={inModifica} categories={categories} onClose={() => setInModifica(null)}
+          onSave={(patch) => { updateExpense(inModifica.id, patch); setInModifica(null); }} />
+      )}
       <div className="page-toolbar">
         <button className="btn primary" onClick={() => setView("nuova")}><Plus size={15} />Aggiungi spesa</button>
         <span style={{ fontSize: "var(--fs-sm)", color: "#7C8797" }}>
@@ -1388,12 +1561,12 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
             </thead>
             <tbody>
               {pageData.map(e => (
-                <tr key={e.id}>
+                <tr key={e.id} onClick={() => setInModifica(e)} style={{ cursor: "pointer" }} title="Tocca per correggere questa spesa">
                   <td className="mono" style={{ color: "#7C8797", whiteSpace: "nowrap" }}>{e.date}</td>
                   <td>{e.desc}{e.note ? <span style={{ color: "#4E576A" }}> — {e.note}</span> : null}</td>
                   <td><span className="pill">{e.primary.trim()}{e.secondary ? " / " + e.secondary : ""}</span></td>
                   <td className="mono" style={{ textAlign: "right", color: e.primary === INCOME_CAT ? COLORS.mint : e.primary === SAVINGS_CAT ? COLORS.blue : "#E7EBF3" }} title={e.primary === SAVINGS_CAT ? "Risparmio/investimento — non conteggiato tra le spese" : undefined}>{e.primary === INCOME_CAT ? "+" : ""}{fmtCHF2(e.amount)}</td>
-                  <td style={{ width: 30 }}><button className="icon-btn danger" onClick={() => deleteExpense(e.id)}><Trash2 size={14} /></button></td>
+                  <td style={{ width: 30 }}><button className="icon-btn danger" onClick={(ev) => { ev.stopPropagation(); deleteExpense(e.id); }}><Trash2 size={14} /></button></td>
                 </tr>
               ))}
               {pageData.length === 0 && (
@@ -1407,6 +1580,94 @@ function Spese({ expenses, categories, addExpenses, deleteExpense }) {
             <button className="btn" onClick={() => setPage(p => p + 1)}>Mostra altri ({filtered.length - pageData.length} rimanenti)</button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+/* La proposta delle ricorrenti, in cima alla tab Spese. Se non c'è niente da
+   registrare non esiste: chi non usa le ricorrenti vede la tab identica a prima. */
+function RicorrentiDaRegistrare({ ricorrenti, registraRicorrenti }) {
+  const [rimandato, setRimandato] = useState(false);
+  const { righe, aggiornamenti } = useMemo(() => proposteRicorrenti(ricorrenti), [ricorrenti]);
+  if (rimandato || righe.length === 0) return null;
+  const totale = righe.reduce((s, r) => s + (r.primary === INCOME_CAT ? 0 : r.amount), 0);
+
+  return (
+    <div className="card" style={{ marginBottom: 16, borderColor: "rgba(74,222,156,0.35)" }}>
+      <div className="card-title">
+        {righe.length === 1 ? "1 spesa ricorrente da registrare" : righe.length + " spese ricorrenti da registrare"}
+        <button className="icon-btn" onClick={() => setRimandato(true)} title="Non ora"><X size={16} /></button>
+      </div>
+      <div style={{ marginBottom: 14 }}>
+        {righe.map((r, i) => (
+          <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "5px 0", fontSize: "var(--fs-base)" }}>
+            <span>{r.desc} <span style={{ color: "#4E576A" }}>· {r.etichetta}</span></span>
+            <span className="mono" style={{ whiteSpace: "nowrap", color: r.primary === INCOME_CAT ? COLORS.mint : "#E7EBF3" }}>
+              {r.primary === INCOME_CAT ? "+" : ""}{fmtCHF2(r.amount)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <button className="btn primary" style={{ width: "100%", justifyContent: "center" }}
+        onClick={() => registraRicorrenti(righe.map(({ regola, etichetta, ...e }) => e), aggiornamenti)}>
+        <Check size={14} />Registra {righe.length === 1 ? "questa spesa" : "queste " + righe.length}{totale > 0 ? " · " + fmtCHF(totale) + " di spese" : ""}
+      </button>
+    </div>
+  );
+}
+
+/* Correzione di una spesa già registrata: prima si poteva solo cancellarla e
+   riscriverla da capo, con l'importo e la data da ribattere. */
+function ModificaSpesaModal({ spesa, categories, onClose, onSave }) {
+  const primaries = Object.keys(categories);
+  const [date, setDate] = useState(spesa.date);
+  const [desc, setDesc] = useState(spesa.desc);
+  const [amount, setAmount] = useState(String(spesa.amount));
+  const [primary, setPrimary] = useState(spesa.primary);
+  const [secondary, setSecondary] = useState(spesa.secondary || "");
+  const [note, setNote] = useState(spesa.note || "");
+  // La categoria salvata può non esistere più (cancellata dopo): la tengo nella
+  // lista, altrimenti aprire la spesa la sposterebbe di nascosto in un'altra.
+  const elencoPrimarie = primaries.includes(primary) ? primaries : [primary, ...primaries];
+  const secondaries = categories[primary] || [];
+  const elencoSecondarie = !secondary || secondaries.includes(secondary) ? secondaries : [secondary, ...secondaries];
+
+  const salva = () => {
+    const n = parseFloat(String(amount).replace(",", "."));
+    if (!desc || isNaN(n)) return;
+    onSave({ date, desc, amount: n, primary, secondary, note });
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Correggi spesa</h3>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="field"><label className="field-label">Data</label><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></div>
+        <div className="field"><label className="field-label">Descrizione</label><input value={desc} onChange={(e) => setDesc(e.target.value)} /></div>
+        <div className="field"><label className="field-label">Importo (CHF)</label><input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+        <div className="row-2">
+          <div className="field">
+            <label className="field-label">Categoria</label>
+            <select value={primary} onChange={(e) => { setPrimary(e.target.value); setSecondary((categories[e.target.value] || [])[0] || ""); }}>
+              {elencoPrimarie.map(p => <option key={p} value={p}>{p.trim()}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label className="field-label">Sottocategoria</label>
+            <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
+              <option value=""></option>
+              {elencoSecondarie.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="field"><label className="field-label">Nota</label><input value={note} onChange={(e) => setNote(e.target.value)} /></div>
+        <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 6 }} onClick={salva}>
+          <Check size={14} />Salva correzione
+        </button>
       </div>
     </div>
   );
@@ -2260,18 +2521,136 @@ function MovementFormModal({ patrimonio, prices, onClose, onSave }) {
 }
 
 /* ============ STRUMENTI (Ammortamento + Split the bill + Movimenti) ============ */
-function Strumenti({ patrimonio, updateAsset, addAsset, categories, addExpenses, movements, addMovement, deleteMovement, prices, fatture, addFattura, deleteFattura, year }) {
+function Strumenti({ ricorrenti, setRicorrenti, patrimonio, updateAsset, addAsset, categories, addExpenses, movements, addMovement, deleteMovement, prices, fatture, addFattura, deleteFattura, year }) {
   const [sub, setSub] = useState("ammortamento");
   return (
     <div>
       <div className="tabs-row">
         <button className={"btn" + (sub === "ammortamento" ? " primary" : "")} onClick={() => setSub("ammortamento")}><Percent size={14} />Ammortamento</button>
         <button className={"btn" + (sub === "fatture" ? " primary" : "")} onClick={() => setSub("fatture")}><SplitSquareHorizontal size={14} />Fatture</button>
+        <button className={"btn" + (sub === "ricorrenti" ? " primary" : "")} onClick={() => setSub("ricorrenti")}><RefreshCw size={14} />Ricorrenti</button>
         <button className={"btn" + (sub === "movimenti" ? " primary" : "")} onClick={() => setSub("movimenti")}><ArrowLeftRight size={14} />Movimenti</button>
       </div>
       {sub === "ammortamento" && <AmmortamentoTool patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} />}
       {sub === "fatture" && <FattureTool categories={categories} addExpenses={addExpenses} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
+      {sub === "ricorrenti" && <RicorrentiTool ricorrenti={ricorrenti} setRicorrenti={setRicorrenti} categories={categories} />}
       {sub === "movimenti" && <Movimenti patrimonio={patrimonio} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} />}
+    </div>
+  );
+}
+
+/* ============ RICORRENTI: le regole ============ */
+function RicorrentiTool({ ricorrenti, setRicorrenti, categories }) {
+  const [showForm, setShowForm] = useState(false);
+  const oggiAbs = absMonth(new Date().getFullYear(), new Date().getMonth());
+  const righe = (ricorrenti || []).map(r => ({
+    ...r,
+    inSospeso: mesiDovuti(r, oggiAbs).length,
+    periodo: meseLabel(parseMonth(r.dal)) + " → " + (r.al ? meseLabel(parseMonth(r.al)) : "senza fine"),
+  }));
+
+  return (
+    <div>
+      <div className="page-toolbar">
+        <button className="btn primary" onClick={() => setShowForm(true)}><Plus size={15} />Nuova ricorrente</button>
+        <span style={{ fontSize: "var(--fs-sm)", color: "#7C8797" }}>
+          {righe.filter(r => r.attiva !== false).length} attive
+        </span>
+      </div>
+
+      <div className="card" style={{ overflowX: "auto" }}>
+        <div className="card-title">Spese che tornano ogni mese</div>
+        {righe.length === 0 ? <div className="empty-state">Nessuna ricorrente impostata.</div> : (
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Descrizione</th><th>Categoria</th><th>Giorno</th><th>Periodo</th>
+                <th style={{ textAlign: "right" }}>Importo (CHF)</th><th style={{ textAlign: "right" }}>Da registrare</th><th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {righe.map(r => (
+                <tr key={r.id} style={r.attiva === false ? { opacity: 0.45 } : undefined}>
+                  <td>{r.desc}</td>
+                  <td><span className="pill">{r.primary.trim()}{r.secondary ? " / " + r.secondary : ""}</span></td>
+                  <td className="mono" style={{ color: "#7C8797" }}>{r.giorno}</td>
+                  <td style={{ whiteSpace: "nowrap", color: "#7C8797" }}>{r.periodo}</td>
+                  <td className="mono" style={{ textAlign: "right", color: r.primary === INCOME_CAT ? COLORS.mint : "#E7EBF3" }}>{fmtCHF2(r.amount)}</td>
+                  <td className="mono" style={{ textAlign: "right", color: r.inSospeso ? COLORS.amber : "#4E576A" }}>{r.inSospeso || "—"}</td>
+                  <td style={{ width: 30 }}>
+                    <button className="icon-btn danger" title="Elimina la regola (le spese già registrate restano)"
+                      onClick={() => setRicorrenti(prev => prev.filter(x => x.id !== r.id))}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {showForm && (
+        <RicorrenteFormModal categories={categories} onClose={() => setShowForm(false)}
+          onSave={(r) => { setRicorrenti(prev => [...(prev || []), { ...r, id: uid() }]); setShowForm(false); }} />
+      )}
+    </div>
+  );
+}
+
+function RicorrenteFormModal({ categories, onClose, onSave }) {
+  const primaries = Object.keys(categories);
+  const [desc, setDesc] = useState("");
+  const [amount, setAmount] = useState("");
+  const [giorno, setGiorno] = useState(1);
+  const [dal, setDal] = useState(new Date().toISOString().slice(0, 7));
+  const [conFine, setConFine] = useState(false);
+  const [al, setAl] = useState(new Date().toISOString().slice(0, 7));
+  const [primary, setPrimary] = useState(primaries[0] || "");
+  const [secondary, setSecondary] = useState((categories[primaries[0]] || [])[0] || "");
+  const [note, setNote] = useState("");
+  const secondaries = categories[primary] || [];
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>Nuova spesa ricorrente</h3>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <div className="field"><label className="field-label">Descrizione</label><input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="es. Abbonamento treno" /></div>
+        <div className="row-2">
+          <div className="field"><label className="field-label">Importo (CHF)</label><input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} /></div>
+          <div className="field"><label className="field-label">Giorno del mese</label><input type="number" min="1" max="31" value={giorno} onChange={(e) => setGiorno(parseInt(e.target.value || "1", 10))} /></div>
+        </div>
+        <div className="field"><label className="field-label">Dal mese</label><input type="month" value={dal} onChange={(e) => setDal(e.target.value)} /></div>
+        <CheckRow checked={conFine} onChange={setConFine} label="Ha una fine"
+          hint="Senza fine continua a proporsi ogni mese, finché non la togli." />
+        {conFine && (
+          <div className="field"><label className="field-label">Fino al mese</label><input type="month" value={al} onChange={(e) => setAl(e.target.value)} /></div>
+        )}
+        <div className="row-2">
+          <div className="field">
+            <label className="field-label">Categoria</label>
+            <select value={primary} onChange={(e) => { setPrimary(e.target.value); setSecondary((categories[e.target.value] || [])[0] || ""); }}>
+              {primaries.map(p => <option key={p} value={p}>{p.trim()}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label className="field-label">Sottocategoria</label>
+            <select value={secondary} onChange={(e) => setSecondary(e.target.value)}>
+              {secondaries.map(x => <option key={x} value={x}>{x}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="field"><label className="field-label">Nota (opzionale)</label><input value={note} onChange={(e) => setNote(e.target.value)} /></div>
+        <button className="btn primary" style={{ width: "100%", justifyContent: "center", marginTop: 6 }}
+          onClick={() => {
+            const n = parseFloat(String(amount).replace(",", "."));
+            if (!desc || isNaN(n)) return;
+            onSave({ desc, amount: n, giorno, dal, al: conFine ? al : null, primary, secondary, note, attiva: true });
+          }}>
+          <Plus size={14} />Crea ricorrente
+        </button>
+      </div>
     </div>
   );
 }
@@ -2600,8 +2979,29 @@ function NuovaFatturaForm({ categories, onClose, onSave }) {
   );
 }
 
+/* Conferma per le azioni che cancellano qualcosa di consistente. Dice sempre
+   quante voci sono coinvolte: "sicuro?" da solo non aiuta a decidere. */
+function ConfermaModal({ titolo, testo, azione, onConferma, onClose }) {
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="modal" style={{ maxWidth: 380 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+          <h3 style={{ margin: 0, fontSize: "var(--fs-lg)" }}>{titolo}</h3>
+          <button className="icon-btn" onClick={onClose}><X size={18} /></button>
+        </div>
+        <p style={{ fontSize: "var(--fs-base)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 18px" }}>{testo}</p>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={onClose}>Annulla</button>
+          <button className="btn danger" style={{ flex: 1, justifyContent: "center", borderColor: COLORS.coral, color: COLORS.coral }}
+            onClick={() => { onConferma(); onClose(); }}>{azione}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ============ CATEGORIE ============ */
-function Categorie({ categories, setCategories, budgets, setBudgets }) {
+function Categorie({ categories, setCategories, budgets, setBudgets, expenses }) {
   const [newPrimary, setNewPrimary] = useState("");
   const [newSecondary, setNewSecondary] = useState({});
 
@@ -2632,8 +3032,35 @@ function Categorie({ categories, setCategories, budgets, setBudgets }) {
   const removeSecondary = (p, s) => setCategories(prev => ({ ...prev, [p]: prev[p].filter(x => x !== s) }));
   const removePrimary = (p) => setCategories(prev => { const c = { ...prev }; delete c[p]; return c; });
 
+  // Quante spese userebbero una categoria che stai per togliere. Restano nei
+  // totali ma diventano non più assegnabili: meglio saperlo prima, col numero.
+  const [daConfermare, setDaConfermare] = useState(null);
+  const quante = (p, s) => (expenses || []).filter(e => e.primary === p && (s === undefined || e.secondary === s)).length;
+
+  const chiediRimozionePrimaria = (p) => {
+    const n = quante(p);
+    if (n === 0) return removePrimary(p);
+    setDaConfermare({
+      titolo: "Eliminare «" + p.trim() + "»?",
+      testo: `Ci sono ${n} ${n === 1 ? "spesa" : "spese"} in questa categoria. Non vengono cancellate e continuano a contare nei totali, ma resteranno assegnate a una categoria che non esiste più e non potrai più sceglierla per le spese nuove.`,
+      azione: "Elimina lo stesso",
+      onConferma: () => removePrimary(p),
+    });
+  };
+  const chiediRimozioneSecondaria = (p, s) => {
+    const n = quante(p, s);
+    if (n === 0) return removeSecondary(p, s);
+    setDaConfermare({
+      titolo: "Eliminare «" + s + "»?",
+      testo: `${n} ${n === 1 ? "spesa usa" : "spese usano"} questa sottocategoria. Le spese restano, ma manterranno un'etichetta che non potrai più assegnare.`,
+      azione: "Elimina lo stesso",
+      onConferma: () => removeSecondary(p, s),
+    });
+  };
+
   return (
     <div>
+      {daConfermare && <ConfermaModal {...daConfermare} onClose={() => setDaConfermare(null)} />}
 
       <div className="card" style={{ marginBottom: 18 }}>
         <div className="card-title">Nuova categoria primaria</div>
@@ -2648,13 +3075,13 @@ function Categorie({ categories, setCategories, budgets, setBudgets }) {
           <div className="card" key={p}>
             <div className="card-title">
               {p.trim()}
-              <button className="icon-btn danger" onClick={() => removePrimary(p)}><Trash2 size={13} /></button>
+              <button className="icon-btn danger" onClick={() => chiediRimozionePrimaria(p)}><Trash2 size={13} /></button>
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 12 }}>
               {secs.map(s => (
                 <span key={s} className="pill" style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
                   {s}
-                  <X size={11} style={{ cursor: "pointer" }} onClick={() => removeSecondary(p, s)} />
+                  <X size={11} style={{ cursor: "pointer" }} onClick={() => chiediRimozioneSecondaria(p, s)} />
                 </span>
               ))}
               {secs.length === 0 && <span style={{ fontSize: "var(--fs-sm)", color: "#4E576A" }}>Nessuna sottocategoria</span>}
@@ -2771,8 +3198,96 @@ function esportaBackupJSON(data) {
   downloadFile(`analisi-spese-backup-${new Date().toISOString().slice(0, 10)}.json`, "application/json", JSON.stringify(payload, null, 2));
 }
 
+/* ============ RIPRISTINO DA BACKUP ============
+   Il backup JSON esisteva da tempo ma nessuno sapeva rileggerlo, nemmeno l'app che
+   lo scriveva: era una rete di sicurezza solo di nome. Qui si rilegge, si mostra
+   cosa contiene a confronto con i dati attuali, e solo dopo si sostituisce. */
+function contaDati(d) {
+  const assets = Object.values(d?.patrimonio || {}).reduce((s, y) => s + (y.assets?.length || 0), 0);
+  return {
+    spese: d?.expenses?.length || 0,
+    anni: Object.keys(d?.patrimonio || {}).sort(),
+    assets,
+    categorie: Object.keys(d?.categories || {}).length,
+    fatture: d?.fatture?.length || 0,
+  };
+}
+
+function RipristinoBackup({ data, onRipristina }) {
+  const fileRef = useRef(null);
+  const [letto, setLetto] = useState(null);   // { dati, meta }
+  const [errore, setErrore] = useState(null);
+
+  const leggi = (file) => {
+    setErrore(null); setLetto(null);
+    const lettore = new FileReader();
+    lettore.onload = () => {
+      try {
+        const j = JSON.parse(String(lettore.result));
+        // Accetta sia il formato con intestazione sia il contenuto nudo.
+        const dati = j?.data && typeof j.data === "object" ? j.data : j;
+        if (!Array.isArray(dati?.expenses) || typeof dati?.patrimonio !== "object" || !dati.patrimonio) {
+          setErrore("Questo file non sembra un backup dell'app: non ci trovo dentro le spese e il patrimonio.");
+          return;
+        }
+        setLetto({ dati, quando: j?.exportedAt ? new Date(j.exportedAt).toLocaleDateString("it-CH") : null });
+      } catch {
+        setErrore("Il file non è leggibile: potrebbe essere danneggiato o non essere un JSON.");
+      }
+    };
+    lettore.onerror = () => setErrore("Non sono riuscito a leggere il file.");
+    lettore.readAsText(file);
+  };
+
+  const ora = contaDati(data);
+  const nuovo = letto ? contaDati(letto.dati) : null;
+
+  return (
+    <div style={{ marginTop: 22, paddingTop: 18, borderTop: "1px solid var(--border-hair)" }}>
+      <div className="card-title" style={{ marginBottom: 10 }}>Ripristina da un backup</div>
+      <input ref={fileRef} type="file" accept="application/json,.json" style={{ display: "none" }}
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) leggi(f); e.target.value = ""; }} />
+      <button className="btn" style={{ width: "100%", justifyContent: "center" }} onClick={() => fileRef.current?.click()}>
+        <Undo2 size={15} />Scegli un file di backup
+      </button>
+
+      {errore && <div style={{ fontSize: "var(--fs-sm)", color: COLORS.coral, marginTop: 10 }}>{errore}</div>}
+
+      {letto && (
+        <div style={{ marginTop: 14, padding: 14, borderRadius: 10, border: "1px solid rgba(245,184,65,0.35)", background: "rgba(245,184,65,0.06)" }}>
+          <div style={{ fontSize: "var(--fs-sm)", fontWeight: 600, marginBottom: 10 }}>
+            Backup{letto.quando ? " del " + letto.quando : ""}
+          </div>
+          <table className="data-table" style={{ marginBottom: 12 }}>
+            <thead><tr><th></th><th style={{ textAlign: "right" }}>Adesso</th><th style={{ textAlign: "right" }}>Nel file</th></tr></thead>
+            <tbody>
+              <tr><td>Spese</td><td className="mono" style={{ textAlign: "right" }}>{ora.spese}</td><td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{nuovo.spese}</td></tr>
+              <tr><td>Voci di patrimonio</td><td className="mono" style={{ textAlign: "right" }}>{ora.assets}</td><td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{nuovo.assets}</td></tr>
+              <tr><td>Anni</td><td className="mono" style={{ textAlign: "right" }}>{ora.anni.join(" ")}</td><td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{nuovo.anni.join(" ")}</td></tr>
+              <tr><td>Categorie</td><td className="mono" style={{ textAlign: "right" }}>{ora.categorie}</td><td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{nuovo.categorie}</td></tr>
+              <tr><td>Fatture</td><td className="mono" style={{ textAlign: "right" }}>{ora.fatture}</td><td className="mono" style={{ textAlign: "right", fontWeight: 700 }}>{nuovo.fatture}</td></tr>
+            </tbody>
+          </table>
+          <p style={{ fontSize: "var(--fs-micro)", color: "#7C8797", lineHeight: 1.6, margin: "0 0 12px" }}>
+            Ripristinando, i dati di adesso vengono sostituiti da quelli del file.
+            {nuovo.spese < ora.spese && <strong style={{ color: COLORS.amber }}> Attenzione: il file ha {ora.spese - nuovo.spese} spese in meno di quelle che hai adesso.</strong>}
+            {" "}Se sbagli, «Annulla» in alto riporta indietro tutto.
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn" style={{ flex: 1, justifyContent: "center" }} onClick={() => setLetto(null)}>Lascia stare</button>
+            <button className="btn primary" style={{ flex: 1, justifyContent: "center" }}
+              onClick={() => { onRipristina(letto.dati); setLetto(null); }}>
+              <Check size={14} />Ripristina
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============ PROFILO: nome utente, cambio email/password, categorie, esporta ============ */
-function Profilo({ user, displayName, setDisplayName, categories, setCategories, addAsset, data, budgets, setBudgets }) {
+function Profilo({ restoreData, user, displayName, setDisplayName, categories, setCategories, addAsset, data, budgets, setBudgets }) {
   const [sub, setSub] = useState("account"); // account | categorie | asset | esporta
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState(null);
@@ -2864,7 +3379,7 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
         <button className={"btn" + (sub === "asset" ? " primary" : "")} onClick={() => setSub("asset")}><Wallet size={14} />Asset</button>
         <button className={"btn" + (sub === "esporta" ? " primary" : "")} onClick={() => setSub("esporta")}><Download size={14} />Esporta</button>
       </div>
-      {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} budgets={budgets} setBudgets={setBudgets} />}
+      {sub === "categorie" && <Categorie categories={categories} setCategories={setCategories} budgets={budgets} setBudgets={setBudgets} expenses={data.expenses} />}
       {sub === "esporta" && (
         <div className="card" style={{ maxWidth: 460 }}>
           <div className="card-title">Esporta i tuoi dati</div>
@@ -2889,8 +3404,10 @@ function Profilo({ user, displayName, setDisplayName, categories, setCategories,
             <button className="btn" style={{ justifyContent: "center" }} onClick={() => esportaBackupJSON(data)}>
               <Save size={15} />Backup completo (JSON)
             </button>
-            <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie): utile come salvataggio di sicurezza, ripristinabile in futuro.</span>
+            <span style={{ fontSize: "var(--fs-micro)", color: "#4E576A" }}>Copia integrale di tutto (spese, patrimonio, prezzi, movimenti, categorie), da rimettere quando serve con il ripristino qui sotto.</span>
           </div>
+
+          <RipristinoBackup data={data} onRipristina={restoreData} />
         </div>
       )}
       {sub === "asset" && (

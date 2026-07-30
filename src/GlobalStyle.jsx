@@ -90,6 +90,19 @@ export function GlobalStyle() {
       .icon-btn:hover { color: var(--text-primary); background: var(--bg-raised); }
       .icon-btn.danger:hover { color: var(--coral); background: rgba(255,107,107,0.10); }
       .badge-amort { display:inline-flex; align-items:center; gap:4px; font-size:var(--fs-micro); color: var(--amber); background: rgba(245,184,65,0.12); border:1px solid rgba(245,184,65,0.35); padding:2px 7px; border-radius:100px; font-weight:600; }
+      /* Senza rete si guarda la copia locale, ma non si tocca niente: bloccare i
+         comandi è più onesto che lasciar scrivere qualcosa che poi sparisce. */
+      .banner-offline {
+        display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+        margin-bottom:14px; padding:10px 14px; border-radius:10px;
+        background: rgba(245,184,65,0.08); border:1px solid rgba(245,184,65,0.35);
+        font-size:var(--fs-sm); color:var(--text-primary);
+      }
+      .nav-root.sola-lettura button.btn.primary,
+      .nav-root.sola-lettura .icon-btn:not(.header-action) { opacity:.35; pointer-events:none; }
+      .nav-root.sola-lettura table.data-table td { pointer-events:none; }
+      .nav-root.sola-lettura .banner-offline .btn { opacity:1; pointer-events:auto; }
+
       /* Modo riordino: le schede ripiegate in barrette che si spostano col dito.
          touch-action:none serve perché la pagina non scorra mentre trascini. */
       .riordino-barra {

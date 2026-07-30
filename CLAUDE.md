@@ -59,7 +59,7 @@ reale di Davide — **i dati sono veri, non di prova**.
 - **Se il caricamento iniziale fallisce, il salvataggio resta bloccato** e si mostra
   la schermata "Dati non caricati": salvare uno stato vuoto sovrascriverebbe tutto.
 - Le colonne aggiunte a `profiles` nel tempo: `net_worth_fallback`, `display_name`,
-  `tickers`, `fx_history`, `budgets`, `fatture`, `layout`. Aggiungerne altre richiede un
+  `tickers`, `fx_history`, `budgets`, `fatture`, `layout`, `ricorrenti`. Aggiungerne altre richiede un
   `alter table` che deve eseguire Davide (io non ho accesso alla sua console
   Supabase) **prima** di pubblicare: il salvataggio scrive tutte le colonne
   insieme, quindi una colonna mancante blocca ogni salvataggio.
@@ -94,6 +94,22 @@ entri dentro qualcosa che c'è già, altrimenti la Dashboard diventa un cruscott
 | Mesi di autonomia | intestazione del gruppo "Cash/liquidità" |
 | Confronto con lo stesso mese dell'anno prima | riga "Totale spese" della ripartizione (solo sul totale, non per categoria) |
 | Riepilogo del mese chiuso | in cima alla Dashboard, una volta al mese; il "già letto" sta in `localStorage`, non nei dati |
+
+### Ricorrenti, ripristino, uso senza rete
+
+- **Spese ricorrenti** (`profiles.ricorrenti`): una regola dice cosa/quanto/che
+  giorno; l'app tiene il segno con `ultimoGenerato` e **propone** i mesi mancanti
+  in cima alla tab Spese. Le spese non si creano mai da sole: righe comparse
+  dal nulla, magari da una regola sbagliata, si scoprono troppo tardi. Spese e
+  avanzamento della regola si scrivono con un solo `applyChange`, altrimenti
+  "Annulla" lascerebbe i mesi segnati come già registrati.
+- **Ripristino da backup** (Profilo → Esporta): prima mostra il confronto fra i
+  dati attuali e quelli del file, poi sostituisce. Passa dalla cronologia.
+- **Senza rete**: a ogni lettura e a ogni salvataggio riusciti si scrive una copia
+  in `localStorage` (`copia-dati-<userId>`, ~176 KB). Se il caricamento fallisce e
+  la copia c'è, l'app si apre in **sola lettura** (classe `.sola-lettura`, che
+  spegne i comandi) con una striscia ambra. `loaded` resta `false`: la regola per
+  cui non si salva senza aver letto davvero i dati non si tocca.
 
 ### Riordino delle schede
 

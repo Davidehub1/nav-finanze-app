@@ -28,6 +28,9 @@ create table profiles (
   -- ordine delle schede scelto da Davide, per sezione:
   -- {"dashboard": ["ripartizione","riquadri",...], "patrimonio": ["Cash/liquidità",...]}
   layout jsonb not null default '{}'::jsonb,
+  -- spese che tornano ogni mese (palestra, treno, stipendio):
+  -- [{ id, desc, amount, primary, secondary, note, giorno, dal, al, ultimoGenerato }]
+  ricorrenti jsonb not null default '[]'::jsonb,
   updated_at timestamptz not null default now()
 );
 

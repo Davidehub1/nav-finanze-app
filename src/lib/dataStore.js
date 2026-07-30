@@ -112,6 +112,7 @@ function rowsToAppData({ profile, expenses, assets, prices, movements }) {
     budgets: profile.budgets || {},
     fatture: profile.fatture || [],
     layout: profile.layout || {},
+    ricorrenti: profile.ricorrenti || [],
   };
 }
 
@@ -259,6 +260,7 @@ export async function persistUserData(userId, data) {
     budgets: data.budgets || {},
     fatture: data.fatture || [],
     layout: data.layout || {},
+    ricorrenti: data.ricorrenti || [],
     updated_at: new Date().toISOString(),
   });
   if (profileErr) throw profileErr;
