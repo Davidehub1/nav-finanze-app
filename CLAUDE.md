@@ -82,6 +82,23 @@ reale di Davide — **i dati sono veri, non di prova**.
 - I prezzi degli investimenti si aggiornano da soli all'apertura, tramite i simboli
   Yahoo in `profiles.tickers` (VWCE.MI, SYBZ.DE, VHYL.L→convertito in CHF, UBSG.SW).
 
+### Le quattro cose "in più" e dove vivono
+
+Sono state aggiunte senza creare schede nuove: la regola concordata è che ogni cosa
+entri dentro qualcosa che c'è già, altrimenti la Dashboard diventa un cruscotto.
+
+| Cosa | Dove |
+|---|---|
+| Curva continua su più anni, divisa per gruppo | scheda "Composizione del patrimonio" (sostituisce "Evoluzione patrimonio"), con bottone "Solo {anno}" |
+| Rendimento degli investimenti | riga grigia sotto il titolo del pannello investimenti |
+| Mesi di autonomia | intestazione del gruppo "Cash/liquidità" |
+| Confronto con lo stesso mese dell'anno prima | riga "Totale spese" della ripartizione (solo sul totale, non per categoria) |
+| Riepilogo del mese chiuso | in cima alla Dashboard, una volta al mese; il "già letto" sta in `localStorage`, non nei dati |
+
+Il rendimento misura **solo il movimento dei prezzi** sulle quote attuali: i
+versamenti fatti durante l'anno non vanno mescolati, altrimenti sembrerebbe
+guadagno del denaro semplicemente aggiunto.
+
 ## Stato e cose in sospeso
 
 Funzionante: dashboard, spese, patrimonio (mese corrente + storico), ammortamento,

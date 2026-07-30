@@ -265,6 +265,99 @@ function getStrictNetWorthSeries(yr, fx, year, prices, fxHistory) {
   });
 }
 
+/* ============ SERIE CONTINUA SU PIÙ ANNI, DIVISA PER GRUPPO ============
+   Dashboard e Patrimonio ragionano un anno alla volta, quindi ogni 1° gennaio la
+   storia si interrompe. Qui invece i mesi davvero compilati vengono messi in fila
+   dal primo anno a oggi, ognuno convertito in CHF col cambio del suo mese, e
+   scomposto nei gruppi: si vede il totale (il bordo superiore) e come si è spostato. */
+const ASSET_GROUPS = ["Investimenti", "Cash/liquidità", "Mezzi di trasporto", FATTURE_GROUP];
+// Nomi corti per legenda e riquadro: su telefono i nomi interi dei gruppi
+// occuperebbero due righe di legenda, rubando spazio al grafico.
+const GROUP_SHORT = { "Investimenti": "Investimenti", "Cash/liquidità": "Liquidità", "Mezzi di trasporto": "Mezzi", [FATTURE_GROUP]: "Fatture" };
+const GROUP_COLORS = { "Investimenti": COLORS.mint, "Cash/liquidità": COLORS.blue, "Mezzi di trasporto": COLORS.amber, [FATTURE_GROUP]: COLORS.violet };
+
+function getCompositionSeries(patrimonio, fatture, fx, prices, fxHistory, soloAnno) {
+  const anni = Object.keys(patrimonio || {}).map(Number).filter(y => soloAnno == null || y === soloAnno).sort((a, b) => a - b);
+  const out = [];
+  for (const y of anni) {
+    const yr = annoConFatture(patrimonio[y], fatture, y);
+    for (let i = 0; i < 12; i++) {
+      if (!isMonthComplete(yr, i, prices, y)) continue;
+      const punto = { mese: MONTHS[i] + " " + String(y).slice(2), totale: 0 };
+      for (const g of ASSET_GROUPS) punto[g] = 0;
+      for (const a of yr.assets) {
+        const { value } = getAssetStrictValue(a, i, new Date(y, i, 1), prices, y);
+        if (value === null) continue;
+        const chf = value * fxRate(a.currency, fx, fxHistory, y, i);
+        punto[ASSET_GROUPS.includes(a.group) ? a.group : "Mezzi di trasporto"] += chf;
+        punto.totale += chf;
+      }
+      for (const g of ASSET_GROUPS) punto[g] = Math.round(punto[g] * 100) / 100;
+      punto.totale = Math.round(punto.totale * 100) / 100;
+      out.push(punto);
+    }
+  }
+  return out;
+}
+
+/* ============ MESI DI AUTONOMIA ============
+   Quanto puoi vivere con la liquidità che hai, se le entrate si fermassero:
+   liquidità del mese diviso la spesa media degli ultimi sei mesi registrati. */
+function calcolaAutonomia(yr, monthIdx, year, fx, prices, fxHistory, expenses) {
+  let liquidi = 0, trovato = false;
+  for (const a of yr.assets) {
+    if (a.group !== "Cash/liquidità") continue;
+    const { value } = getAssetStrictValue(a, monthIdx, new Date(year, monthIdx, 1), prices, year);
+    if (value === null) continue;
+    trovato = true;
+    liquidi += value * fxRate(a.currency, fx, fxHistory, year, monthIdx);
+  }
+  if (!trovato) return null;
+  const perMese = new Map();
+  for (const e of expenses || []) {
+    if (!isSpesa(e.primary)) continue;
+    const k = e.date.slice(0, 7);
+    perMese.set(k, (perMese.get(k) || 0) + e.amount);
+  }
+  const fine = monthKey(year, monthIdx);
+  const ultimi = [...perMese.entries()].filter(([k]) => k <= fine).sort((a, b) => a[0].localeCompare(b[0])).slice(-6);
+  if (ultimi.length < 3) return null;
+  const media = ultimi.reduce((s, [, v]) => s + v, 0) / ultimi.length;
+  if (media <= 0 || liquidi <= 0) return null;
+  return { liquidi: Math.round(liquidi), mesi: liquidi / media };
+}
+
+/* ============ RIEPILOGO DEL MESE APPENA CHIUSO ============
+   L'unica cosa in tutta l'app che si fa avanti da sola. Compare la prima volta che
+   apri l'app in un mese nuovo e, una volta letta, non torna fino al mese dopo. */
+function riepilogoMese(expenses, patrimonio, fatture, fx, prices, fxHistory, y, m) {
+  const pref = monthKey(y, m);
+  const prec = new Date(y, m - 1, 1);
+  const prefPrec = monthKey(prec.getFullYear(), prec.getMonth());
+  let spese = 0, entrate = 0;
+  const perCat = {}, perCatPrec = {};
+  for (const e of expenses || []) {
+    if (e.date.startsWith(pref)) {
+      if (e.primary === INCOME_CAT) entrate += e.amount;
+      else if (isSpesa(e.primary)) { spese += e.amount; perCat[e.primary] = (perCat[e.primary] || 0) + e.amount; }
+    } else if (e.date.startsWith(prefPrec) && isSpesa(e.primary)) {
+      perCatPrec[e.primary] = (perCatPrec[e.primary] || 0) + e.amount;
+    }
+  }
+  if (spese === 0 && entrate === 0) return null;
+  const serie = (anno) => getStrictNetWorthSeries(annoConFatture(patrimonio[anno], fatture, anno), fx, anno, prices, fxHistory);
+  const nw = serie(y)[m];
+  const nwPrec = m > 0 ? serie(y)[m - 1] : serie(y - 1)[11];
+  const salita = Object.entries(perCat)
+    .map(([cat, v]) => ({ cat, delta: v - (perCatPrec[cat] || 0) }))
+    .sort((a, b) => b.delta - a.delta)[0];
+  return {
+    spese, entrate, risparmio: entrate - spese,
+    deltaNW: (nw != null && nwPrec != null) ? nw - nwPrec : null,
+    salita: salita && salita.delta > 0 ? salita : null,
+  };
+}
+
 function getCurrentMonthIndex(series) {
   for (let i = 11; i >= 0; i--) if (series[i] !== null && series[i] !== undefined) return i;
   return -1;
@@ -607,7 +700,7 @@ function FinanceApp({ user }) {
       <main className="nav-main">
         <AppHeader title={TAB_TITLES[tab]} past={past} undo={undo} saveStatus={saveStatus} saveNow={saveNow} onLogout={() => supabase.auth.signOut()} />
         {tab === "dashboard" && <Dashboard expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} fxRates={fxRates} prices={prices} categories={categories} fxHistory={fxHistory} budgets={data.budgets} fatture={fatture} />}
-        {tab === "patrimonio" && <Patrimonio patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
+        {tab === "patrimonio" && <Patrimonio expenses={expenses} patrimonio={patrimonio} year={year} setYear={setYear} updateAsset={updateAsset} deleteAsset={deleteAsset} bulkUpdateMonth={bulkUpdateMonth} fxRates={fxRates} prices={prices} updatePrice={updatePrice} saveNow={saveNow} tickers={data.tickers} setTickers={setTickers} onRefreshPrices={refreshTrackedPrices} fxHistory={fxHistory} fatture={fatture} />}
         {tab === "spese" && <Spese expenses={expenses} categories={categories} addExpenses={addExpenses} deleteExpense={deleteExpense} />}
         {tab === "strumenti" && <Strumenti patrimonio={patrimonio} updateAsset={updateAsset} addAsset={addAsset} categories={categories} addExpenses={addExpenses} movements={movements} addMovement={addMovement} deleteMovement={deleteMovement} prices={prices} fatture={fatture} addFattura={addFattura} deleteFattura={deleteFattura} year={year} />}
         {tab === "profilo" && <Profilo user={user} displayName={displayName} setDisplayName={setDisplayName} categories={categories} setCategories={setCategories} addAsset={addAsset} data={data} budgets={data.budgets} setBudgets={setBudgets} />}
@@ -752,7 +845,6 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
   const entrateMese = stats.byMonthIncome[selMonth];
   const saldoMese = entrateMese - speseMese;
 
-  const nwSeries = MONTHS.map((m, i) => ({ mese: m, patrimonio: netWorthSeries[i] ?? null })).filter(d => d.patrimonio !== null);
   const speseSeries = MONTHS.map((m, i) => ({ mese: m, spese: stats.byMonth[i], entrate: stats.byMonthIncome[i] }));
   const pieData = Object.entries(stats.byPrimary).sort((a, b) => b[1] - a[1]).map(([k, v]) => ({ name: k.trim(), key: k, value: Math.round(v * 100) / 100 }));
 
@@ -796,8 +888,67 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
     return { rows, total };
   }, [stats.yExp, selMonth]);
 
+  // Stesso mese, un anno fa: il confronto che conta per le spese stagionali.
+  // Sta solo sul totale — su ogni categoria sarebbero due frecce per riga.
+  const totaleAnnoPrima = useMemo(() => {
+    const pref = monthKey(year - 1, selMonth);
+    return expenses.reduce((s, e) => s + (e.date.startsWith(pref) && isSpesa(e.primary) ? e.amount : 0), 0);
+  }, [expenses, year, selMonth]);
+
+  // Composizione del patrimonio: di default tutta la storia, con la possibilità di
+  // restringersi all'anno scelto. Il bordo superiore dell'area è il patrimonio netto.
+  const [soloAnno, setSoloAnno] = useState(false);
+  const composizione = useMemo(
+    () => getCompositionSeries(patrimonio, fatture, fxRates, prices, fxHistory, soloAnno ? year : null),
+    [patrimonio, fatture, fxRates, prices, fxHistory, soloAnno, year]
+  );
+  const gruppiPresenti = useMemo(
+    () => ASSET_GROUPS.filter(g => composizione.some(p => p[g] > 0)),
+    [composizione]
+  );
+
+  // Riepilogo del mese appena chiuso: una volta letto non torna fino al mese dopo.
+  // Il "già letto" sta nel browser, non fra i dati: è una preferenza, non un dato.
+  const mesePrec = new Date(new Date().getFullYear(), new Date().getMonth() - 1, 1);
+  const chiaveRiepilogo = "riepilogo-" + monthKey(mesePrec.getFullYear(), mesePrec.getMonth());
+  const [riepilogoLetto, setRiepilogoLetto] = useState(() => {
+    try { return localStorage.getItem(chiaveRiepilogo) === "1"; } catch { return true; }
+  });
+  const riepilogo = useMemo(
+    () => riepilogoLetto ? null : riepilogoMese(expenses, patrimonio, fatture, fxRates, prices, fxHistory, mesePrec.getFullYear(), mesePrec.getMonth()),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [riepilogoLetto, expenses, patrimonio, fatture, fxRates, prices, fxHistory]
+  );
+  const chiudiRiepilogo = () => {
+    try { localStorage.setItem(chiaveRiepilogo, "1"); } catch { /* navigazione privata: pazienza */ }
+    setRiepilogoLetto(true);
+  };
+
   return (
     <div>
+      {riepilogo && (
+        <div className="card" style={{ marginBottom: 16, borderColor: "rgba(74,222,156,0.35)" }}>
+          <div className="card-title">
+            {MONTHS[mesePrec.getMonth()]} {mesePrec.getFullYear()} è chiuso
+            <button className="icon-btn" onClick={chiudiRiepilogo} title="Ho letto"><X size={16} /></button>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "14px 28px", alignItems: "baseline" }}>
+            <span>Speso <strong className="mono" style={{ color: COLORS.coral }}>{fmtCHF(riepilogo.spese)}</strong></span>
+            <span>Entrate <strong className="mono" style={{ color: COLORS.mint }}>{fmtCHF(riepilogo.entrate)}</strong></span>
+            <span>Risparmiato <strong className="mono" style={{ color: riepilogo.risparmio >= 0 ? COLORS.mint : COLORS.coral }}>{fmtCHF(riepilogo.risparmio)}</strong></span>
+            {riepilogo.deltaNW !== null && (
+              <span>Patrimonio <strong className="mono" style={{ color: riepilogo.deltaNW >= 0 ? COLORS.mint : COLORS.coral }}>
+                {riepilogo.deltaNW >= 0 ? "+" : "−"}{fmtCHF(Math.abs(riepilogo.deltaNW))}</strong></span>
+            )}
+          </div>
+          {riepilogo.salita && (
+            <div style={{ fontSize: "var(--fs-sm)", color: "#7C8797", marginTop: 12 }}>
+              È cresciuto soprattutto <strong style={{ color: "var(--text-primary)" }}>{riepilogo.salita.cat.trim()}</strong>, {fmtCHF(riepilogo.salita.delta)} in più del mese prima.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Unica riga di controlli: mese (quello che cambi spesso) e anno. */}
       <div className="page-toolbar">
         <MonthStepper month={selMonth} setMonth={setSelMonth} year={year} />
@@ -897,6 +1048,16 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
                     </span>
                   );
                 })()}
+                {/* Le spese sono stagionali: il confronto che conta è lo stesso
+                    mese dell'anno prima, non quello appena passato. */}
+                {totaleAnnoPrima > 0 && monthBreakdown.total > 0 && (() => {
+                  const pct = Math.round((monthBreakdown.total / totaleAnnoPrima - 1) * 100);
+                  return (
+                    <span style={{ fontWeight: 400, fontSize: "var(--fs-micro)", color: pct > 0 ? COLORS.coral : pct < 0 ? COLORS.mint : "#4E576A" }}>
+                      {" "}· {pct > 0 ? "+" : ""}{pct}% su {MONTHS[selMonth]} {String(year - 1).slice(2)}
+                    </span>
+                  );
+                })()}
               </span>
               <span className="mono" style={{ fontSize: "var(--fs-lg)" }}>{fmtCHF(monthBreakdown.total)}</span>
             </div>
@@ -904,31 +1065,53 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
         )}
       </div>
 
+      {/* Il bordo superiore dell'area è il patrimonio netto; le bande dicono da
+          cosa è composto. Di default tutta la storia, senza il muro del capodanno. */}
+      <div className="card" style={{ marginBottom: 16 }}>
+        <div className="card-title">
+          <span>Composizione del patrimonio {soloAnno ? year : "— dal " + (Object.keys(patrimonio).sort()[0] || year)}</span>
+          <button className="btn" style={{ padding: "5px 11px" }} onClick={() => setSoloAnno(s => !s)}>
+            {soloAnno ? "Tutta la storia" : "Solo " + year}
+          </button>
+        </div>
+        {composizione.length === 0 ? <div className="empty-state">Nessun mese ancora compilato.</div> : (
+          <ResponsiveContainer width="100%" height={280}>
+            <AreaChart data={composizione}>
+              <CartesianGrid stroke="#2A3140" vertical={false} />
+              <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} interval="preserveStartEnd" minTickGap={28} />
+              <YAxis stroke="#7C8797" fontSize={11} tickFormatter={(v) => (v / 1000) + "k"} />
+              <Tooltip content={<TipComposizione />} />
+              <Legend wrapperStyle={{ fontSize: "var(--fs-sm)" }} />
+              {gruppiPresenti.map(g => (
+                <Area key={g} type="monotone" dataKey={g} stackId="1" name={GROUP_SHORT[g] || g}
+                  stroke={GROUP_COLORS[g]} fill={GROUP_COLORS[g]} fillOpacity={0.30} strokeWidth={1.5} />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+        )}
+      </div>
+
       <div className="grid-2col-wide">
         <div className="card">
-          <div className="card-title">Evoluzione patrimonio {year}</div>
-          <ResponsiveContainer width="100%" height={260}>
-            <AreaChart data={nwSeries}>
-              <defs>
-                <linearGradient id="nwGrad" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor={COLORS.mint} stopOpacity={0.35} />
-                  <stop offset="100%" stopColor={COLORS.mint} stopOpacity={0} />
-                </linearGradient>
-              </defs>
+          <div className="card-title">Entrate vs spese mensili {year}</div>
+          <ResponsiveContainer width="100%" height={240}>
+            <BarChart data={speseSeries}>
               <CartesianGrid stroke="#2A3140" vertical={false} />
               <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} />
-              <YAxis stroke="#7C8797" fontSize={11} tickFormatter={(v) => (v / 1000) + "k"} />
+              <YAxis stroke="#7C8797" fontSize={11} />
               <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
-              <Area type="monotone" dataKey="patrimonio" stroke={COLORS.mint} fill="url(#nwGrad)" strokeWidth={2} />
-            </AreaChart>
+              <Legend wrapperStyle={{ fontSize: "var(--fs-sm)" }} />
+              <Bar dataKey="entrate" fill={COLORS.mint} radius={[4, 4, 0, 0]} name="Entrate" />
+              <Bar dataKey="spese" fill={COLORS.coral} radius={[4, 4, 0, 0]} name="Spese" />
+            </BarChart>
           </ResponsiveContainer>
         </div>
         <div className="card">
           <div className="card-title">Spese per categoria {year}</div>
           {pieData.length === 0 ? <div className="empty-state">Nessuna spesa registrata</div> : (
-            <ResponsiveContainer width="100%" height={260}>
+            <ResponsiveContainer width="100%" height={240}>
               <PieChart>
-                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
+                <Pie data={pieData} dataKey="value" nameKey="name" innerRadius={50} outerRadius={85} paddingAngle={2}>
                   {pieData.map((d) => <Cell key={d.key} fill={colorFor(d.key)} />)}
                 </Pie>
                 <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
@@ -937,20 +1120,24 @@ function Dashboard({ expenses, patrimonio, year, setYear, fxRates, prices, categ
           )}
         </div>
       </div>
+    </div>
+  );
+}
 
-      <div className="card" style={{ marginTop: 16 }}>
-        <div className="card-title">Entrate vs spese mensili {year}</div>
-        <ResponsiveContainer width="100%" height={220}>
-          <BarChart data={speseSeries}>
-            <CartesianGrid stroke="#2A3140" vertical={false} />
-            <XAxis dataKey="mese" stroke="#7C8797" fontSize={11} />
-            <YAxis stroke="#7C8797" fontSize={11} />
-            <Tooltip contentStyle={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, fontSize: "var(--fs-sm)" }} formatter={(v) => fmtCHF(v)} />
-            <Legend wrapperStyle={{ fontSize: "var(--fs-sm)" }} />
-            <Bar dataKey="entrate" fill={COLORS.mint} radius={[4, 4, 0, 0]} name="Entrate" />
-            <Bar dataKey="spese" fill={COLORS.coral} radius={[4, 4, 0, 0]} name="Spese" />
-          </BarChart>
-        </ResponsiveContainer>
+/* Il riquadro che appare passando sul grafico: le bande dal basso in alto, poi il totale. */
+function TipComposizione({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+  const totale = payload.reduce((s, p) => s + (p.value || 0), 0);
+  return (
+    <div style={{ background: "#1E2530", border: "1px solid #2A3140", borderRadius: 8, padding: "9px 11px", fontSize: "var(--fs-sm)" }}>
+      <div style={{ fontWeight: 700, marginBottom: 6 }}>{label}</div>
+      {payload.slice().reverse().map(p => (
+        <div key={p.dataKey} style={{ display: "flex", justifyContent: "space-between", gap: 16, color: p.color }}>
+          <span>{p.name}</span><span className="mono">{fmtCHF(p.value)}</span>
+        </div>
+      ))}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, marginTop: 6, paddingTop: 6, borderTop: "1px solid #2A3140", fontWeight: 700 }}>
+        <span>Patrimonio netto</span><span className="mono">{fmtCHF(totale)}</span>
       </div>
     </div>
   );
@@ -1132,7 +1319,7 @@ function NuovaSpesaForm({ categories, onClose, onSave }) {
 }
 
 /* ============ PATRIMONIO ============ */
-function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory, fatture }) {
+function Patrimonio({ expenses, patrimonio, year, setYear, updateAsset, deleteAsset, bulkUpdateMonth, fxRates, prices, updatePrice, saveNow, tickers, setTickers, onRefreshPrices, fxHistory, fatture }) {
   const [showUpdateMonth, setShowUpdateMonth] = useState(false);
   const [editing, setEditing] = useState(null); // { assetIdx, monthIdx }
   const [expanded, setExpanded] = useState(null); // { assetIdx, monthIdx } — cella investimento con dettaglio quote×prezzo aperto
@@ -1161,6 +1348,14 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
   // su `year` perché le frecce ‹ › cambiano anch'esse l'anno (attraversandolo) e
   // impostano già il mese giusto: un effetto lo sovrascriverebbe.
   const cambiaAnno = (y) => { setYear(y); setMeseCorrenteIdx(meseDiDefault(y)); };
+
+  // Mesi di autonomia: sta nell'intestazione del gruppo Cash/liquidità, dove i
+  // soldi liquidi sono già elencati. Nessun riquadro nuovo.
+  const autonomiaDi = useCallback(
+    (m) => (m >= 0 ? calcolaAutonomia(yr, m, year, fxRates, prices, fxHistory, expenses) : null),
+    [yr, year, fxRates, prices, fxHistory, expenses]
+  );
+  const autonomiaStorico = autonomiaDi(currentMonthIdx);
 
   const confirmTimers = useRef([]);
   const confirmMonth = () => {
@@ -1217,6 +1412,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
           updateAsset={updateAsset} prices={prices} updatePrice={updatePrice}
           netWorthValue={netWorthSeries[meseCorrenteIdx]}
           onConfirm={confirmMonth} confirmStatus={confirmStatus}
+          fxRates={fxRates} fxHistory={fxHistory} autonomia={autonomiaDi(meseCorrenteIdx)}
         />
       </>)}
 
@@ -1229,7 +1425,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
         const selectedAsset = expanded && isInvestGroup ? items.find(a => a.idx === expanded.assetIdx) : null;
         return (
           <div className="card" key={g} style={{ marginBottom: 16, overflowX: "auto" }}>
-            <div className="card-title">{g}</div>
+            <GroupTitle gruppo={g} autonomia={autonomiaStorico} />
             <table className="data-table">
               <thead>
                 <tr>
@@ -1309,7 +1505,7 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
         if (investAssets.length === 0) return null;
         return (
           <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
-            <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={currentMonthIdx} tickers={tickers} setTickers={setTickers} onRefreshPrices={onRefreshPrices} />
+            <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={currentMonthIdx} tickers={tickers} setTickers={setTickers} onRefreshPrices={onRefreshPrices} fxRates={fxRates} fxHistory={fxHistory} />
           </div>
         );
       })()}
@@ -1331,8 +1527,25 @@ function Patrimonio({ patrimonio, year, setYear, updateAsset, deleteAsset, bulkU
   );
 }
 
+/* Intestazione di un gruppo di asset. Per la liquidità porta con sé i mesi di
+   autonomia: il dato compare dove stanno i soldi a cui si riferisce, non in un
+   riquadro a parte. */
+function GroupTitle({ gruppo, autonomia }) {
+  return (
+    <div className="card-title">
+      <span>{gruppo}</span>
+      {gruppo === "Cash/liquidità" && autonomia && (
+        <span title="Liquidità di questo mese divisa per la spesa media degli ultimi sei mesi"
+          style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, color: "#4E576A", whiteSpace: "nowrap" }}>
+          {fmtCHF(autonomia.liquidi)} · {autonomia.mesi.toFixed(1)} mesi di autonomia
+        </span>
+      )}
+    </div>
+  );
+}
+
 /* ============ MESE CORRENTE (mobile): stessa composizione del Patrimonio, ma solo il mese selezionato, righe grandi e comode al tocco ============ */
-function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus }) {
+function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updatePrice, netWorthValue, onConfirm, confirmStatus, fxRates, fxHistory, autonomia }) {
   const [editing, setEditing] = useState(null); // assetIdx
   const [expandedIdx, setExpandedIdx] = useState(null); // assetIdx con dettaglio quote×prezzo aperto
   const investAssets = yr.assets.map((a, i) => ({ ...a, idx: i })).filter(a => a.group === "Investimenti");
@@ -1360,7 +1573,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
         if (items.length === 0) return null;
         return (
           <div className="card" key={g} style={{ marginBottom: 16 }}>
-            <div className="card-title">{g}</div>
+            <GroupTitle gruppo={g} autonomia={autonomia} />
             {items.map(a => {
               const isAmort = a.ammortamento?.enabled;
               const isPriceLinked = a.units !== undefined && a.units !== null;
@@ -1401,7 +1614,7 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
 
       {investAssets.length > 0 && (
         <div className="card" style={{ marginBottom: 16, overflowX: "auto" }}>
-          <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={monthIdx} />
+          <InvestmentPanel assets={investAssets} year={year} prices={prices} updatePrice={updatePrice} colStyle={colStyle} currentMonthIdx={monthIdx} fxRates={fxRates} fxHistory={fxHistory} />
         </div>
       )}
 
@@ -1418,12 +1631,32 @@ function MeseCorrente({ yr, year, monthIdx, groups, updateAsset, prices, updateP
 }
 
 /* ============ PANNELLO INVESTIMENTI QUOTATI: quote × prezzo, tabella prezzi YTD/MTD, grafico ============ */
-function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentMonthIdx, tickers, setTickers, onRefreshPrices }) {
+function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentMonthIdx, tickers, setTickers, onRefreshPrices, fxRates, fxHistory }) {
   const [selected, setSelected] = useState(assets[0]?.name || null);
   const [editingPrice, setEditingPrice] = useState(null); // { name, monthIdx }
   const [showTickerCfg, setShowTickerCfg] = useState(false);
   const [testResult, setTestResult] = useState({}); // { assetName: { loading|price|currency|error } }
   const [refreshStatus, setRefreshStatus] = useState(null); // null | "loading" | "done" | "error"
+
+  // Quanto hanno prodotto gli investimenti da inizio anno. È il movimento dei
+  // PREZZI sulle quote che hai adesso: non si mescola con i versamenti fatti
+  // durante l'anno, che farebbero sembrare un guadagno quello che è solo denaro
+  // aggiunto. Convertito in CHF col cambio dell'ultimo mese noto.
+  const rendimento = useMemo(() => {
+    let guadagno = 0, base = 0;
+    for (const a of assets) {
+      if (a.units === undefined || a.units === null) continue;
+      const p = prices[String(year)]?.[a.name];
+      if (!p?.start) continue;
+      let ultimo = -1;
+      for (let i = 11; i >= 0; i--) if (p.monthly?.[i] !== null && p.monthly?.[i] !== undefined) { ultimo = i; break; }
+      if (ultimo < 0) continue;
+      const cambio = fxRate(a.currency, fxRates, fxHistory, year, ultimo);
+      guadagno += a.units * (p.monthly[ultimo] - p.start) * cambio;
+      base += a.units * p.start * cambio;
+    }
+    return base > 0 ? { guadagno: Math.round(guadagno), pct: guadagno / base } : null;
+  }, [assets, prices, year, fxRates, fxHistory]);
 
   const refreshNow = async () => {
     setRefreshStatus("loading");
@@ -1471,13 +1704,23 @@ function InvestmentPanel({ assets, year, prices, updatePrice, colStyle, currentM
   return (
     <div>
       <div className="card-title" style={{ alignItems: "center" }}>
-        <span title="Clicca un nome per vederne il grafico, clicca una cella per registrare il prezzo">Prezzo per quota — {year}</span>
+        <span title="Clicca un nome per vederne il grafico, clicca una cella per registrare il prezzo">Investimenti — {year}</span>
         {setTickers && (
           <button className="btn" style={{ padding: "5px 11px", flexShrink: 0 }} onClick={() => setShowTickerCfg(s => !s)}>
             <RefreshCw size={13} />Prezzi automatici
           </button>
         )}
       </div>
+
+      {rendimento && (
+        <div style={{ fontSize: "var(--fs-sm)", color: "#7C8797", margin: "-8px 0 14px" }}
+          title="Movimento dei prezzi sulle quote che hai adesso, da inizio anno. Non comprende i versamenti fatti durante l'anno.">
+          Da inizio anno i prezzi ti hanno fatto{" "}
+          <strong className="mono" style={{ color: rendimento.guadagno >= 0 ? COLORS.mint : COLORS.coral }}>
+            {rendimento.guadagno >= 0 ? "+" : "−"}{fmtCHF(Math.abs(rendimento.guadagno))} ({fmtPct(rendimento.pct)})
+          </strong>
+        </div>
+      )}
 
       {setTickers && showTickerCfg && (
         <div style={{ border: "1px solid var(--border-hair)", borderRadius: 10, padding: 14, marginBottom: 14, background: "var(--bg-void)" }}>
